@@ -17,6 +17,7 @@ PDF는 "글자를 좌표에 찍어 놓은 그림"에 가깝다. 문단·목록·
 import bisect
 import json
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -62,6 +63,14 @@ class Line:
     kind: str = "text"  # text | bullet | label | table | image
 
 
+@dataclass
+class DocContext:
+    """문서 전체에서 한 번 계산해 모든 페이지 처리에 쓰는 정보."""
+
+    body_fonts: set[str]
+    vocab: Counter  # 줄 안쪽에 등장한 단어 빈도. 줄바꿈 위치의 띄어쓰기 판단에 사용
+
+
 # ---------- 1~4. 페이지에서 줄 추출 ----------
 
 
@@ -78,6 +87,24 @@ def detect_body_fonts(doc: pymupdf.Document, sample_pages: int = 50) -> set[str]
                     if re.search(r"[가-힣]", span["text"]):
                         fonts.add(span["font"])
     return fonts
+
+
+WORD_EDGE_PUNCT = "()[]'\"‘’“”,.·"
+
+
+def build_vocab(doc: pymupdf.Document) -> Counter:
+    """각 줄의 '안쪽' 단어 빈도를 센다.
+
+    줄의 첫 단어와 마지막 단어는 줄바꿈으로 잘린 조각일 수 있어서 제외한다.
+    안쪽 단어는 확실히 온전한 단어이므로, 줄바꿈 지점에서 붙여 쓸지 띄어 쓸지 판단하는 사전이 된다.
+    """
+    vocab: Counter = Counter()
+    for page in doc:
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                words = "".join(s["text"] for s in line["spans"]).split()
+                vocab.update(w.strip(WORD_EDGE_PUNCT) for w in words[1:-1])
+    return vocab
 
 
 def line_from_spans(raw_line: dict, body_fonts: set[str]) -> Line | None:
@@ -105,7 +132,7 @@ def line_from_spans(raw_line: dict, body_fonts: set[str]) -> Line | None:
     return Line(x, y, size, "".join(parts))
 
 
-def table_to_markdown(table, raw_lines: list[dict], body_fonts: set[str]) -> str:
+def table_to_markdown(table, raw_lines: list[dict], ctx: DocContext) -> str:
     """표를 마크다운으로 변환한다.
 
     표 라이브러리의 기본 텍스트 추출은 폰트를 구분하지 않아 아이콘 글자가 깨진 채 들어간다.
@@ -119,14 +146,16 @@ def table_to_markdown(table, raw_lines: list[dict], body_fonts: set[str]) -> str
                 cells.append("")
                 continue
             rect = pymupdf.Rect(bbox)
-            texts = []
+            cell = ""
             for raw_line in raw_lines:
                 x0, y0, x1, y1 = raw_line["bbox"]
                 if rect.contains(pymupdf.Point((x0 + x1) / 2, (y0 + y1) / 2)):
-                    line = line_from_spans(raw_line, body_fonts)
-                    if line is not None and line.kind != "image":
-                        texts.append(line.text.strip())
-            cells.append(" ".join(texts).replace("|", "/"))
+                    line = line_from_spans(raw_line, ctx.body_fonts)
+                    if line is not None and line.kind not in ("image", "bullet"):
+                        # 줄 끝 공백이 단어 경계 정보라서 strip하지 않고 본문과 같은 규칙으로 잇는다
+                        cell = join_wrapped(cell, line.text, ctx.vocab) if cell else line.text
+            # 마크다운 표 안에서는 줄바꿈과 '|'를 쓸 수 없다
+            cells.append(normalize(cell).replace("\n", " ").replace("|", "/"))
         rows.append("| " + " | ".join(cells) + " |")
     if not rows:
         return ""
@@ -134,15 +163,15 @@ def table_to_markdown(table, raw_lines: list[dict], body_fonts: set[str]) -> str
     return "\n".join([rows[0], separator, *rows[1:]])
 
 
-def extract_lines(page: pymupdf.Page, body_fonts: set[str]) -> list[Line]:
+def extract_lines(page: pymupdf.Page, ctx: DocContext) -> list[Line]:
     footer_y = page.rect.height - FOOTER_MARGIN
     tables = page.find_tables().tables
     table_rects = [pymupdf.Rect(t.bbox) for t in tables]
 
     raw_lines = [ln for block in page.get_text("dict")["blocks"] for ln in block.get("lines", [])]
-    lines = [Line(t.bbox[0], t.bbox[1], 0, table_to_markdown(t, raw_lines, body_fonts), "table") for t in tables]
+    lines = [Line(t.bbox[0], t.bbox[1], 0, table_to_markdown(t, raw_lines, ctx), "table") for t in tables]
     for raw_line in raw_lines:
-        line = line_from_spans(raw_line, body_fonts)
+        line = line_from_spans(raw_line, ctx.body_fonts)
         if line is None or line.y >= footer_y:
             continue
         if any(rect.contains(pymupdf.Point(line.x + 1, line.y + 1)) for rect in table_rects):
@@ -168,21 +197,40 @@ def starts_new_paragraph(prev: Line, cur: Line) -> bool:
     return cur.y - prev.y > prev.size * 2  # 줄 간격이 크게 벌어지면 다른 문단
 
 
-def join_wrapped(prev_text: str, cur_text: str) -> str:
+def join_wrapped(prev_text: str, cur_text: str, vocab: Counter | None = None) -> str:
     """PDF 자동 줄바꿈 복원.
 
-    - 단어 경계에서 끊기면 앞 줄 끝에 공백이 남아 있다 → 그대로 이어 붙임 ("여러 " + "위험")
+    - 앞 줄 끝에 공백이 있으면 확실한 단어 경계 → 그대로 이어 붙임 ("여러 " + "위험")
     - 문장이 끝난 줄 뒤는 새 문장 → 줄바꿈
-    - 둘 다 아니면 단어 중간에서 끊긴 것 → 공백 없이 이어 붙임 ("탑승" + "자가")
+    - 공백이 없으면 애매하다. 단어 중간("탑승"+"자가")일 수도, 공백이 생략된 단어 경계
+      ("버튼을"+"누르고")일 수도 있다 → 문서 단어 사전(vocab)으로 판단 (should_join)
     """
     if prev_text.endswith(" "):
         return prev_text + cur_text
     if prev_text.endswith(SENTENCE_END):
         return prev_text + "\n" + cur_text
+    if vocab is not None and not should_join(prev_text, cur_text, vocab):
+        return prev_text + " " + cur_text
     return prev_text + cur_text
 
 
-def assemble(lines: list[Line]) -> str:
+def should_join(prev_text: str, cur_text: str, vocab: Counter) -> bool:
+    """줄 끝 조각 a와 다음 줄 첫 조각 b를 붙여 쓸지 판단한다.
+
+    a+b가 사전에 있으면 붙인다 ("서비스센"+"터").
+    a+b는 없는데 a, b가 각각 사전에 있으면 띄운다 ("버튼을"+"누르고").
+    둘 다 아니면 붙인다 (한국어 매뉴얼은 단어 중간 줄바꿈이 흔하다).
+    """
+    a = (prev_text.split() or [""])[-1].strip(WORD_EDGE_PUNCT)
+    b = (cur_text.split() or [""])[0].strip(WORD_EDGE_PUNCT)
+    if not a or not b:
+        return True
+    if vocab[a + b] > 0:
+        return True
+    return not (vocab[a] > 0 and vocab[b] > 0)
+
+
+def assemble(lines: list[Line], vocab: Counter | None = None) -> str:
     bullet_rows = {round(ln.y) for ln in lines if ln.kind == "bullet"}
     paragraphs: list[str] = []
     prev: Line | None = None
@@ -192,7 +240,7 @@ def assemble(lines: list[Line]) -> str:
             continue
         is_item = line.kind == "text" and any(abs(round(line.y) - y) <= 1 for y in bullet_rows)
         if prev is not None and not is_item and not starts_new_paragraph(prev, line):
-            paragraphs[-1] = join_wrapped(paragraphs[-1], line.text)
+            paragraphs[-1] = join_wrapped(paragraphs[-1], line.text, vocab)
         else:
             paragraphs.append(f"- {line.text}" if is_item else line.text)
         prev = line
@@ -207,8 +255,8 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
-def extract_page(page: pymupdf.Page, body_fonts: set[str]) -> str:
-    return assemble(extract_lines(page, body_fonts))
+def extract_page(page: pymupdf.Page, ctx: DocContext) -> str:
+    return assemble(extract_lines(page, ctx), ctx.vocab)
 
 
 # ---------- 목차 기준 섹션 분할 ----------
@@ -222,10 +270,10 @@ def split_by_toc(doc: pymupdf.Document, doc_id: str) -> list[Section]:
        (못 찾으면 그 페이지의 시작 위치를 사용)
     3. 이번 제목 위치 ~ 다음 제목 위치 = 한 섹션
     """
-    body_fonts = detect_body_fonts(doc)
+    ctx = DocContext(body_fonts=detect_body_fonts(doc), vocab=build_vocab(doc))
     page_offsets, parts, pos = [], [], 0
     for page in doc:
-        text = extract_page(page, body_fonts) + "\n"
+        text = extract_page(page, ctx) + "\n"
         page_offsets.append(pos)
         parts.append(text)
         pos += len(text)

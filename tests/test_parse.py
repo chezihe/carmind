@@ -51,3 +51,14 @@ def test_assemble_bullets_and_paragraphs():
         Line(41, 73, 8.5, "배터리가 부족한 경우"),
     ]
     assert assemble(lines) == "녹화 해제 조건\n다음과 같습니다.\n- 시간이 초과된 경우\n- 배터리가 부족한 경우"
+
+
+def test_should_join_uses_document_vocab():
+    from collections import Counter
+
+    from carmind.data.parse import should_join
+
+    vocab = Counter({"서비스센터": 5, "버튼을": 3, "누르고": 2, "탑승": 1})
+    assert should_join("가까운 서비스센", "터에서", vocab)  # 합친 단어가 사전에 있음
+    assert not should_join("시동 버튼을", "누르고 P", vocab)  # 각각 온전한 단어
+    assert should_join("운전자 또는 탑승", "자가 심각한", vocab)  # 판단 불가 → 붙임

@@ -27,8 +27,14 @@ class ModelConfig(BaseModel):
     name: str
 
 
+class ChunkConfig(BaseModel):
+    min_tokens: int = 100
+    max_tokens: int = 512
+
+
 class DataConfig(BaseModel):
     max_samples: int | None = None  # None이면 전체 사용
+    chunk: ChunkConfig = ChunkConfig()
 
 
 class Config(BaseModel):

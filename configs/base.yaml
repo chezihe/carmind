@@ -3,3 +3,8 @@ runtime:
   device: auto   # auto | cuda | mps | cpu
   dtype: auto    # auto | bfloat16 | float16 | float32
   seed: 42
+
+data:
+  chunk:
+    min_tokens: 100  # 이보다 짧은 섹션은 옆 섹션과 합침
+    max_tokens: 512  # 청크 최대 길이 (목차 머리말 포함)
