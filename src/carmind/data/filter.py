@@ -15,8 +15,9 @@ from datasketch import MinHash, MinHashLSH
 
 # 질문만 읽어서는 무엇을 묻는지 알 수 없는 지시어 시작
 DEICTIC_RE = re.compile(r"^(이|그|저|해당|위|아래)\s?(기능|장치|버튼|경우|것|거|부분|표시|경고등)")
-# 답변에서 원문 문서를 언급하는 표현 (정비사처럼 답해야 함)
-DOC_REF_RE = re.compile(r"설명서|안내되어 있|명시되어 있|나와 있습니다|문서에")
+# 답변에서 원문 문서를 "출처로" 언급하는 메타 표현 (정비사처럼 답해야 함).
+# '설명서' 단어 자체는 막지 않는다: 취급설명서 보관 방법, 부품에 동봉된 사용설명서 안내처럼 정당한 내용이 있다
+DOC_REF_RE = re.compile(r"안내되어 있|명시되어 있|나와 있습니다|설명서에 따르면|설명서에는|문서에")
 
 MIN_QUESTION_CHARS = 8
 MAX_QUESTION_CHARS = 150
@@ -87,11 +88,14 @@ def jaccard(a: set[str], b: set[str]) -> float:
 
 
 def dedup_questions(
-    records: list[QARecord], threshold: float = 0.8, num_perm: int = 128
+    records: list[QARecord], threshold: float = 0.95, num_perm: int = 128
 ) -> tuple[list[QARecord], list[tuple[QARecord, str]]]:
     """질문이 거의 같은 QA를 제거한다. 먼저 나온 것을 남긴다.
 
     LSH는 후보를 빠르게 찾는 근사 방법이라 오탐이 있다 → 후보는 실제 Jaccard로 한 번 더 확인한다.
+    임계값이 0.95로 높은 이유: 글자 유사도는 의미 차이를 모른다. 0.6~0.9 구간에는
+    "18인치/20인치", "충전 도어/도어"처럼 글자는 거의 같고 뜻이 다른 질문이 많았다.
+    띄어쓰기만 다른 질문("에어 필터"/"에어필터")은 유사도 1.0이라 그대로 걸러진다.
     """
     lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
     kept, dropped = [], []

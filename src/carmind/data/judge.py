@@ -18,7 +18,7 @@ import openai
 
 from carmind.llm import StructuredLLM
 
-JUDGE_VERSION = "v1"
+JUDGE_VERSION = "v2"  # v2: 브랜드명 → "제조사" 일반화도 허용
 
 INSTRUCTIONS = """\
 당신은 자동차 취급설명서 기반 QA 데이터의 품질을 검수하는 엄격한 심사자입니다.
@@ -27,7 +27,7 @@ INSTRUCTIONS = """\
 판정 항목:
 - faithful: 답변의 모든 내용(사실, 수치, 조건, 원인·결과, 부정·비교)이 원문에서 직접 확인되면 true.
   원문에 없는 내용이 하나라도 있으면 false. 표현을 바꾸거나 요약한 것은 괜찮습니다.
-  브랜드·서비스센터 이름을 "공식 서비스센터"로 바꾼 것은 허용합니다.
+  브랜드명을 "제조사"로, 서비스센터·정비 네트워크 이름을 "공식 서비스센터"로 바꾼 것은 허용합니다.
 - unsupported: faithful이 false이면 원문에 없는 답변 속 문장(또는 구절)을 그대로 적으세요. true이면 빈 배열.
 - answers_question: 답변이 질문에 직접 답하면 true. 질문과 어긋나거나 핵심을 빠뜨리면 false.
 - standalone: 원문을 보지 않은 사람도 질문만 읽고 무엇을 묻는지 알 수 있으면 true.

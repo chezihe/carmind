@@ -18,7 +18,7 @@ parser.add_argument("--qa", type=Path, default=Path("data/interim/qa"))
 parser.add_argument("--teacher", default="gpt-5.4-mini")
 parser.add_argument("--prompt-version", default="v2")
 parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
-parser.add_argument("--dedup-threshold", type=float, default=0.8)
+parser.add_argument("--dedup-threshold", type=float, default=0.95)
 parser.add_argument("--out", type=Path, default=Path("data/interim"))
 args = parser.parse_args()
 
