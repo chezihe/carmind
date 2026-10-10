@@ -1,0 +1,6 @@
+# 수집할 원본 문서 목록 예시.
+# 실제 목록은 data/sources.yaml에 작성한다 (data/는 git에 올라가지 않음).
+#   cp configs/data/sources.example.yaml data/sources.yaml
+sources:
+  - id: manual_a_2025
+    url: https://example.com/manuals/model-a/2025.pdf
