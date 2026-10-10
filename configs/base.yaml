@@ -1,0 +1,5 @@
+# 모든 환경 공통 설정. 환경별 값은 env/*.yaml에서 덮어쓴다.
+runtime:
+  device: auto   # auto | cuda | mps | cpu
+  dtype: auto    # auto | bfloat16 | float16 | float32
+  seed: 42

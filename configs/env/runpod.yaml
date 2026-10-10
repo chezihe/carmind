@@ -1,0 +1,7 @@
+# GPU 서버: 실제 학습/서빙
+runtime:
+  device: cuda
+model:
+  name: Qwen/Qwen2.5-7B-Instruct
+data:
+  max_samples: null

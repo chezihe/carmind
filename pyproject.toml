@@ -1,0 +1,24 @@
+[project]
+name = "carmind"
+version = "0.1.0"
+description = "Automotive domain multimodal LLM & agent"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.6",
+    "pydantic>=2.14.0",
+    "pyyaml>=6.0.3",
+    "torch>=2.14.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/carmind"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
