@@ -196,7 +196,7 @@ def generate_all(
                 budget.record(r.input_tokens + r.output_tokens)
                 if budget.exhausted:
                     # 아직 시작 안 한 요청은 취소. 이미 실행 중인 요청(최대 workers개)은 끝까지 받는다
-                    cancelled = sum(fu.cancel() for fu in futures)
+                    cancelled = sum(fu.cancel() for fu in futures if not fu.done() and not fu.running())
                     if cancelled:
                         print(f"  오늘 토큰 상한 도달 ({budget.used:,}/{budget.limit:,}) → {cancelled}개 취소, 내일 이어서")
             if i % 50 == 0 or i == len(todo):

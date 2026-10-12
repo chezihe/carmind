@@ -60,8 +60,10 @@ for path in sorted(args.chunks.glob("*.jsonl")):
     results = generate_all(chunks, teacher, args.out / args.model / PROMPT_VERSION / path.name, args.workers, budget)
     ok = [r for r in results if r.error is None]
     pairs = [qa for r in ok for qa in r.qa_pairs]
+    if not results:
+        continue  # 이미 완료됐거나 오늘 상한 도달로 건너뜀
     if not ok:
-        print("성공한 요청이 없습니다:", results[0].error if results else "no results")
+        print("성공한 요청이 없습니다:", results[0].error)
         continue
 
     cost = sum(r.cost_usd for r in ok)
