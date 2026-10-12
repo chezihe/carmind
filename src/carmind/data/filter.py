@@ -21,7 +21,7 @@ DOC_REF_RE = re.compile(r"안내되어 있|명시되어 있|나와 있습니다|
 
 MIN_QUESTION_CHARS = 8
 MAX_QUESTION_CHARS = 150
-MIN_ANSWER_CHARS = 15
+MIN_ANSWER_CHARS = 5  # 프롬프트 v3에서 짧은 답을 허용했다 ("즉시 충전을 중지하십시오." = 14자)
 MAX_ANSWER_CHARS = 800
 
 

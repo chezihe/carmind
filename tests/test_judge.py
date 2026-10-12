@@ -15,3 +15,9 @@ def test_schema_is_strict():
     item = SCHEMA["properties"]["verdicts"]["items"]
     assert item["additionalProperties"] is False
     assert set(item["required"]) == set(item["properties"])
+
+
+def test_verdict_keeps_question_for_consistency_check():
+    from dataclasses import asdict
+
+    assert asdict(Verdict("x", True, [], True, True, "타이어 공기압은?"))["question"] == "타이어 공기압은?"

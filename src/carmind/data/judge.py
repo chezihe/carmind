@@ -66,6 +66,7 @@ class Verdict:
     unsupported: list[str]
     answers_question: bool
     standalone: bool
+    question: str = ""  # 판정 대상 질문 원문. 판정을 QA에 합칠 때 같은 QA인지 확인하는 데 쓴다
 
     @property
     def passed(self) -> bool:
@@ -116,7 +117,9 @@ class Judge:
         for i, qa in enumerate(qas):
             v = by_index[i]
             result.verdicts.append(
-                Verdict(qa["qa_id"], v["faithful"], v["unsupported"], v["answers_question"], v["standalone"])
+                Verdict(
+                    qa["qa_id"], v["faithful"], v["unsupported"], v["answers_question"], v["standalone"], qa["question"]
+                )
             )
         return result
 
@@ -137,7 +140,16 @@ def judge_all(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     done = load_done(out_path)
-    todo = [cid for cid in by_chunk if cid not in done]
+
+    def fully_judged(cid: str) -> bool:
+        """청크의 후보 QA가 전부(같은 질문으로) 판정됐을 때만 완료로 본다.
+        필터를 바꿔 청크에 새 QA가 생기면 그 청크는 다시 판정한다 (새 QA가 판정 없이 빠지는 것 방지)."""
+        if cid not in done:
+            return False
+        judged = {v["qa_id"]: v.get("question") for v in done[cid]["verdicts"]}
+        return all(judged.get(qa["qa_id"]) == qa["question"] for qa in by_chunk[cid])
+
+    todo = [cid for cid in by_chunk if not fully_judged(cid)]
     print(f"{len(by_chunk)} chunks ({len(candidates)} QA): {len(done)} done, {len(todo)} to judge ({judge.model})")
 
     results = []
