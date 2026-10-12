@@ -66,7 +66,8 @@ class Verdict:
     unsupported: list[str]
     answers_question: bool
     standalone: bool
-    question: str = ""  # 판정 대상 질문 원문. 판정을 QA에 합칠 때 같은 QA인지 확인하는 데 쓴다
+    question: str = ""  # 판정 대상 질문·답변 원문. 판정을 QA에 합칠 때 같은 QA인지 확인하는 데 쓴다
+    answer: str = ""
 
     @property
     def passed(self) -> bool:
@@ -118,10 +119,18 @@ class Judge:
             v = by_index[i]
             result.verdicts.append(
                 Verdict(
-                    qa["qa_id"], v["faithful"], v["unsupported"], v["answers_question"], v["standalone"], qa["question"]
+                    qa["qa_id"], v["faithful"], v["unsupported"], v["answers_question"], v["standalone"],
+                    qa["question"], qa["answer"],
                 )
             )
         return result
+
+
+def verdict_matches(verdict: dict, qa: dict) -> bool:
+    """판정이 이 QA(같은 질문·답변)에 대한 것인가. answer가 없는 예전 기록은 질문만 비교한다."""
+    if verdict.get("question") != qa["question"]:
+        return False
+    return verdict.get("answer") is None or verdict["answer"] == qa["answer"]
 
 
 def load_done(out_path: Path) -> dict[str, dict]:
@@ -146,8 +155,8 @@ def judge_all(
         필터를 바꿔 청크에 새 QA가 생기면 그 청크는 다시 판정한다 (새 QA가 판정 없이 빠지는 것 방지)."""
         if cid not in done:
             return False
-        judged = {v["qa_id"]: v.get("question") for v in done[cid]["verdicts"]}
-        return all(judged.get(qa["qa_id"]) == qa["question"] for qa in by_chunk[cid])
+        judged = {v["qa_id"]: v for v in done[cid]["verdicts"]}
+        return all(qa["qa_id"] in judged and verdict_matches(judged[qa["qa_id"]], qa) for qa in by_chunk[cid])
 
     todo = [cid for cid in by_chunk if not fully_judged(cid)]
     print(f"{len(by_chunk)} chunks ({len(candidates)} QA): {len(done)} done, {len(todo)} to judge ({judge.model})")

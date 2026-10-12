@@ -27,3 +27,14 @@ def test_anonymize_and_load_replacements(tmp_path):
     rules = load_replacements(p)
     assert anonymize("가까운 가나다센터에서 점검하십시오.", rules) == "가까운 공식 서비스센터에서 점검하십시오."
     assert load_replacements(tmp_path / "missing.yaml") == []
+
+
+def test_generic_cleanup_is_idempotent_and_merges_duplicates():
+    from carmind.data.synth_qa import anonymize
+
+    rules = [("가나센터", "공식 서비스센터"), ("다라망", "공식 서비스센터")]
+    text = "당사 직영 가나센터나 다라망에서 점검하십시오. 품질은 당사가 보증합니다."
+    once = anonymize(text, rules)
+    assert once == "공식 서비스센터에서 점검하십시오. 품질은 제조사가 보증합니다."
+    assert anonymize(once, rules) == once
+    assert anonymize("가나센터 다라망에 방문", rules) == "공식 서비스센터에 방문"

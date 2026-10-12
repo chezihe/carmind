@@ -11,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from carmind.data.filter import dedup_questions, flatten, rule_violation
-from carmind.data.synth_qa import load_replacements
+from carmind.data.synth_qa import anonymize, load_replacements
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--qa", type=Path, default=Path("data/interim/qa"))
@@ -23,7 +23,8 @@ parser.add_argument("--out", type=Path, default=Path("data/interim"))
 parser.add_argument("--doc", default=None, help="이 문서만 처리 (예: manual_xxx_2025)")
 args = parser.parse_args()
 
-banned = [src for src, _ in load_replacements(args.anonymize)]  # 치환됐어야 할 표현이 남아 있으면 탈락
+replacements = load_replacements(args.anonymize)
+banned = [src for src, _ in replacements]  # 치환됐어야 할 표현이 남아 있으면 탈락
 
 
 def write(path: Path, rows: list[dict]) -> None:
@@ -37,6 +38,9 @@ for path in sorted((args.qa / args.teacher / args.prompt_version).glob("*.jsonl"
     records = flatten([json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()])
     rejected, passed = [], []
     for qa in records:
+        # 치환 규칙이 바뀌었을 수 있으니 다시 적용 (멱등)
+        qa.question = anonymize(qa.question, replacements)
+        qa.answer = anonymize(qa.answer, replacements)
         reason = rule_violation(qa, banned)
         if reason:
             rejected.append({**asdict(qa), "reason": reason})

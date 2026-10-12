@@ -21,3 +21,12 @@ def test_verdict_keeps_question_for_consistency_check():
     from dataclasses import asdict
 
     assert asdict(Verdict("x", True, [], True, True, "타이어 공기압은?"))["question"] == "타이어 공기압은?"
+
+
+def test_verdict_matches_checks_answer_and_accepts_legacy():
+    from carmind.data.judge import verdict_matches
+
+    qa = {"question": "Q", "answer": "A2"}
+    assert not verdict_matches({"question": "Q", "answer": "A1"}, qa)  # 답변이 바뀌면 다시 판정
+    assert verdict_matches({"question": "Q"}, qa)  # answer 필드 없는 예전 기록
+    assert not verdict_matches({"question": "다른 질문"}, qa)

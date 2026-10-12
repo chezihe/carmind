@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from carmind.data.judge import Judge, judge_all, load_done
+from carmind.data.judge import Judge, judge_all, load_done, verdict_matches
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--candidates", type=Path, default=Path("data/interim/qa_candidates"))
@@ -52,9 +52,9 @@ for path in sorted(args.candidates.glob("*.jsonl")):
 
     verdicts = {v["qa_id"]: v for r in load_done(judged_path).values() for v in r["verdicts"]}
     # 안전장치: 판정이 지금 후보 QA와 같은 질문에 대한 것인지 확인
-    mismatched = [qa["qa_id"] for qa in candidates if qa["qa_id"] in verdicts and verdicts[qa["qa_id"]].get("question") != qa["question"]]
+    mismatched = [qa["qa_id"] for qa in candidates if qa["qa_id"] in verdicts and not verdict_matches(verdicts[qa["qa_id"]], qa)]
     if mismatched:
-        raise SystemExit(f"판정과 QA 질문이 다릅니다 ({len(mismatched)}개, 예: {mismatched[:3]}). 판정 파일을 확인하세요: {judged_path}")
+        raise SystemExit(f"판정과 QA가 다릅니다 ({len(mismatched)}개, 예: {mismatched[:3]}). 판정 파일을 확인하세요: {judged_path}")
     judged = [qa for qa in candidates if qa["qa_id"] in verdicts]
     fails = Counter()
     final = []

@@ -112,10 +112,25 @@ def load_replacements(path: Path) -> list[tuple[str, str]]:
     return [(r["from"], r["to"]) for r in data.get("replacements", [])]
 
 
+# 브랜드와 무관한 정리 규칙 (일반 명사라 코드에 둔다). 로컬 치환 규칙을 적용한 뒤 실행
+GENERIC_CLEANUP = [
+    (re.compile(r"당사\s*직영\s*"), ""),  # "당사 직영 공식 서비스센터" → "공식 서비스센터"
+    (re.compile(r"당사"), "제조사"),  # 제조사 1인칭 표현 ("당사가 보증하는 부품")
+    # 각각 치환된 두 서비스망 이름이 이어 붙은 흔적: "공식 서비스센터나 공식 서비스센터", "공식 서비스센터 공식 서비스센터"
+    (re.compile(r"(공식 서비스센터)(?:\s*(?:나|또는|,|및)?\s*공식 서비스센터)+"), r"\1"),
+]
+
+
 def anonymize(text: str, replacements: list[tuple[str, str]]) -> str:
-    """프롬프트 지시만으로는 100% 지켜지지 않아서 코드로 확실히 치환한다."""
+    """프롬프트 지시만으로는 100% 지켜지지 않아서 코드로 확실히 치환한다.
+
+    여러 번 적용해도 결과가 같아서(멱등) 생성 단계와 필터 단계에서 모두 적용한다.
+    규칙을 고치면 QA를 다시 생성하지 않고 필터만 다시 돌려도 반영된다.
+    """
     for src, dst in replacements:
         text = text.replace(src, dst)
+    for pattern, dst in GENERIC_CLEANUP:
+        text = pattern.sub(dst, text)
     return text
 
 
