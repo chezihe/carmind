@@ -13,8 +13,10 @@ import random
 from collections import Counter
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
+from carmind.budget import DailyTokenBudget
 from carmind.data.synth_qa import (
     PROMPT_VERSION,
     OpenAITeacher,
@@ -31,18 +33,31 @@ parser.add_argument("--limit", type=int, default=None, help="무작위로 뽑을
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--workers", type=int, default=8)
 parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
+parser.add_argument("--max-daily-tokens", type=int, default=None, help="오늘(UTC) 사용 토큰 상한 (무료 한도 보호)")
+parser.add_argument("--ledger", type=Path, default=Path("data/interim/usage_ledger.jsonl"))
+parser.add_argument("--splits", type=Path, default=Path("data/splits.yaml"), help="holdout 문서 목록 (생성 제외)")
 args = parser.parse_args()
+
+holdout = set()
+if args.splits.exists():
+    holdout = set((yaml.safe_load(args.splits.read_text(encoding="utf-8")) or {}).get("holdout", []))
+budget = DailyTokenBudget(args.ledger, args.model, args.max_daily_tokens)
+if args.max_daily_tokens:
+    print(f"오늘 사용량 {budget.used:,} / 상한 {args.max_daily_tokens:,} 토큰 ({budget.pool})")
 
 load_dotenv()
 teacher = OpenAITeacher(args.model, args.effort, load_replacements(args.anonymize))
 
 for path in sorted(args.chunks.glob("*.jsonl")):
+    if path.stem in holdout:
+        print(f"[{path.stem}] holdout 문서 → 건너뜀")
+        continue
     chunks = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     total = len(chunks)
     if args.limit:
         chunks = random.Random(args.seed).sample(chunks, min(args.limit, total))
 
-    results = generate_all(chunks, teacher, args.out / args.model / PROMPT_VERSION / path.name, args.workers)
+    results = generate_all(chunks, teacher, args.out / args.model / PROMPT_VERSION / path.name, args.workers, budget)
     ok = [r for r in results if r.error is None]
     pairs = [qa for r in ok for qa in r.qa_pairs]
     if not ok:

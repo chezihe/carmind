@@ -17,6 +17,7 @@ from pathlib import Path
 import openai
 import yaml
 
+from carmind.budget import DailyTokenBudget
 from carmind.llm import StructuredLLM
 
 PROMPT_VERSION = "v3"  # v2: 지시어 질문·문서 언급·추가 서술 금지, 브랜드명 코드 치환 / v3: 길이 하한 제거, 마무리 문장 금지
@@ -166,21 +167,39 @@ def load_done(out_path: Path) -> set[str]:
     return done
 
 
-def generate_all(chunks: list[dict], teacher: OpenAITeacher, out_path: Path, workers: int = 8) -> list[ChunkResult]:
+def generate_all(
+    chunks: list[dict],
+    teacher: OpenAITeacher,
+    out_path: Path,
+    workers: int = 8,
+    budget: DailyTokenBudget | None = None,
+) -> list[ChunkResult]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     done = load_done(out_path)
     todo = [c for c in chunks if c["chunk_id"] not in done]
     print(f"{len(chunks)} chunks: {len(done)} done, {len(todo)} to generate ({teacher.model})")
+    if budget and budget.exhausted:
+        print(f"  오늘 토큰 상한 도달 ({budget.used:,}/{budget.limit:,}) → 건너뜀")
+        return []
 
     results = []
     with ThreadPoolExecutor(max_workers=workers) as pool, out_path.open("a", encoding="utf-8") as f:
         futures = [pool.submit(teacher.generate, c) for c in todo]
         for i, fut in enumerate(as_completed(futures), 1):
+            if fut.cancelled():
+                continue
             r = fut.result()
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
             f.flush()  # 중간에 끊겨도 완료분은 남게
             results.append(r)
-            if i % 10 == 0 or i == len(todo):
+            if budget:
+                budget.record(r.input_tokens + r.output_tokens)
+                if budget.exhausted:
+                    # 아직 시작 안 한 요청은 취소. 이미 실행 중인 요청(최대 workers개)은 끝까지 받는다
+                    cancelled = sum(fu.cancel() for fu in futures)
+                    if cancelled:
+                        print(f"  오늘 토큰 상한 도달 ({budget.used:,}/{budget.limit:,}) → {cancelled}개 취소, 내일 이어서")
+            if i % 50 == 0 or i == len(todo):
                 cost = sum(x.cost_usd for x in results)
-                print(f"  {i}/{len(todo)}  cost=${cost:.4f}")
+                print(f"  {i}/{len(todo)}  cost=${cost:.4f}", flush=True)
     return results
