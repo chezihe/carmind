@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from carmind.data.judge import Judge, judge_all, load_done, verdict_matches
+from carmind.data.synth_qa import anonymize, load_replacements
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--candidates", type=Path, default=Path("data/interim/qa_candidates"))
@@ -24,10 +25,12 @@ parser.add_argument("--limit", type=int, default=None, help="무작위로 뽑을
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--workers", type=int, default=8)
 parser.add_argument("--out", type=Path, default=Path("data"))
+parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
 parser.add_argument("--doc", default=None, help="이 문서만 처리 (예: manual_xxx_2025)")
 args = parser.parse_args()
 
 load_dotenv()
+replacements = load_replacements(args.anonymize)
 judge = Judge(args.judge, args.effort)
 
 for path in sorted(args.candidates.glob("*.jsonl")):
@@ -36,6 +39,9 @@ for path in sorted(args.candidates.glob("*.jsonl")):
     candidates = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     chunk_file = args.chunks / path.name
     chunks = {c["chunk_id"]: c for c in map(json.loads, chunk_file.read_text(encoding="utf-8").splitlines())}
+    # QA 답변과 같은 치환을 원문에도 적용해서 judge가 치환된 표현을 원문에 없는 내용으로 보지 않게 한다
+    for c in chunks.values():
+        c["text"] = anonymize(c["text"], replacements)
     if args.limit:
         picked = set(random.Random(args.seed).sample(sorted({qa["chunk_id"] for qa in candidates}), args.limit))
         candidates = [qa for qa in candidates if qa["chunk_id"] in picked]
