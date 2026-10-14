@@ -8,6 +8,7 @@ dependencies = [
     "httpx>=0.28.1",
     "numpy>=2.4.6",
     "openai>=3.28.0",
+    "peft>=0.21.2",
     "pydantic>=2.14.0",
     "pymupdf>=1.28.2",
     "python-dotenv>=1.2.4",

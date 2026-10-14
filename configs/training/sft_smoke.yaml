@@ -1,0 +1,39 @@
+# 맥북 smoke test: 작은 모델 + 데이터 일부로 LoRA SFT 파이프라인이 끝까지 도는지 확인한다.
+# 품질이 목표가 아니라 "loss가 내려가는지, 학습 전후 답변이 달라지는지"를 보는 용도.
+# GPU 서버에서는 model.name, runtime, data 크기, max_steps만 바꿔서 같은 스크립트로 돌린다.
+runtime:
+  device: auto     # auto | cuda | mps | cpu
+  # MPS에서 fp16은 fp32보다 겨우 ~10% 빠르고(loss 계산이 어차피 fp32로 올라감),
+  # grad scaler 없이 오래 학습하면 overflow로 loss가 NaN이 될 위험이 있다. 0.5B는 fp32로도 메모리 충분
+  dtype: float32
+  seed: 42
+
+model:
+  name: Qwen/Qwen2.5-0.5B-Instruct
+
+data:
+  train: data/processed/sft/closed/train.jsonl
+  val: data/processed/sft/closed/val.jsonl
+  max_train_samples: 2000   # null이면 전체
+  max_val_samples: 200
+  max_seq_len: 512          # 학습 데이터 최대 ~350토큰이라 거의 잘리지 않음
+
+lora:
+  r: 16             # 저랭크 행렬의 차원. 클수록 표현력↑, 학습 파라미터↑
+  alpha: 32         # 스케일 = alpha / r. 보통 r의 2배
+  dropout: 0.05
+  # attention + MLP의 모든 선형층에 LoRA를 붙인다 (Qwen2/Llama 계열 이름)
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+train:
+  lr: 2.0e-4               # LoRA는 전체 미세조정(1e-5대)보다 큰 lr을 쓴다
+  warmup_steps: 10
+  max_steps: 90            # optimizer step 수. 드라이런 ~8s/step → 평가 포함 약 15분 (90×16 = 1,440샘플 ≈ 0.7 epoch)
+  batch_size: 2            # 한 번에 GPU에 올리는 샘플 수. 16GB 맥북에서 4는 스왑이 생겨 느려짐
+  grad_accum: 8            # 이만큼 모아서 한 번 업데이트 → 실효 배치 16
+  max_grad_norm: 1.0
+  gradient_checkpointing: false  # 7B처럼 메모리가 빠듯할 때 true (속도↓, 메모리↓)
+  log_every: 5
+  eval_every: 15           # val 200개 평가 1회 ~30초
+
+output_dir: outputs/sft_smoke
