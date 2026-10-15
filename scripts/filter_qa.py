@@ -24,7 +24,7 @@ parser.add_argument("--doc", default=None, help="이 문서만 처리 (예: manu
 args = parser.parse_args()
 
 replacements = load_replacements(args.anonymize)
-banned = [src for src, _ in replacements]  # 치환됐어야 할 표현이 남아 있으면 탈락
+banned = [r.src for r in replacements]  # 치환됐어야 할 표현이 남아 있으면 탈락
 
 
 def write(path: Path, rows: list[dict]) -> None:

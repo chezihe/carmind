@@ -12,7 +12,9 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 import openai
 import yaml
@@ -98,37 +100,56 @@ class ChunkResult:
     error: str | None = None
 
 
-def load_replacements(path: Path) -> list[tuple[str, str]]:
+class Replacement(NamedTuple):
+    src: str
+    dst: str
+    loose_space: bool = False  # True면 글자 사이 공백·줄바꿈이 있어도 매칭 (PDF 줄바꿈으로 끊긴 이름)
+
+
+def load_replacements(path: Path) -> list[Replacement]:
     """로컬 치환 규칙(data/anonymize.yaml)을 읽는다. 없으면 빈 목록.
 
     형식:  replacements:
              - from: "원문 표현"
                to: "공식 서비스센터"
+               loose_space: true   # 선택. "원문\n표현", "원 문표현"처럼 끊긴 형태도 치환
+    매칭은 대소문자를 구분하지 않는다 (영문 표기가 "Abc", "ABC"로 섞여 나옴).
     브랜드명이 코드·저장소에 들어가지 않도록 규칙은 git에 올라가지 않는 data/ 아래에 둔다.
     """
     if not path.exists():
         return []
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return [(r["from"], r["to"]) for r in data.get("replacements", [])]
+    return [Replacement(r["from"], r["to"], bool(r.get("loose_space", False))) for r in data.get("replacements", [])]
+
+
+@cache
+def _rule_pattern(src: str, loose_space: bool) -> re.Pattern:
+    if loose_space:
+        body = r"\s*".join(re.escape(ch) for ch in src if not ch.isspace())
+    else:
+        body = re.escape(src)
+    return re.compile(body, re.IGNORECASE)
 
 
 # 브랜드와 무관한 정리 규칙 (일반 명사라 코드에 둔다). 로컬 치환 규칙을 적용한 뒤 실행
 GENERIC_CLEANUP = [
     (re.compile(r"당사\s*직영\s*"), ""),  # "당사 직영 공식 서비스센터" → "공식 서비스센터"
-    (re.compile(r"당사"), "제조사"),  # 제조사 1인칭 표현 ("당사가 보증하는 부품")
+    (re.compile(r"당사(?!자)"), "제조사"),  # 제조사 1인칭 표현 ("당사가 보증하는 부품"). "당사자"는 제외
     # 각각 치환된 두 서비스망 이름이 이어 붙은 흔적: "공식 서비스센터나 공식 서비스센터", "공식 서비스센터 공식 서비스센터"
     (re.compile(r"(공식 서비스센터)(?:\s*(?:나|또는|,|및)?\s*공식 서비스센터)+"), r"\1"),
 ]
 
 
-def anonymize(text: str, replacements: list[tuple[str, str]]) -> str:
+def anonymize(text: str, replacements: list[tuple[str, str]] | list[Replacement]) -> str:
     """프롬프트 지시만으로는 100% 지켜지지 않아서 코드로 확실히 치환한다.
 
     여러 번 적용해도 결과가 같아서(멱등) 생성 단계와 필터 단계에서 모두 적용한다.
     규칙을 고치면 QA를 다시 생성하지 않고 필터만 다시 돌려도 반영된다.
     """
-    for src, dst in replacements:
-        text = text.replace(src, dst)
+    for rule in replacements:
+        src, dst = rule[0], rule[1]
+        loose_space = len(rule) > 2 and rule[2]
+        text = _rule_pattern(src, loose_space).sub(lambda _m, dst=dst: dst, text)
     for pattern, dst in GENERIC_CLEANUP:
         text = pattern.sub(dst, text)
     return text
