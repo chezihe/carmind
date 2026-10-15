@@ -3,6 +3,7 @@
 uv run python scripts/judge_qa.py --judge gpt-6-luna --limit 20   # 파일럿 (청크 20개)
 uv run python scripts/judge_qa.py --judge gpt-6-luna              # 전체
 출력: data/interim/qa_judged/<judge>/<doc>.jsonl (판정), data/processed/qa/<doc>.jsonl (통과한 최종 QA)
+      holdout 문서(data/splits.yaml)는 data/processed/eval/<doc>.jsonl (평가셋, 학습 데이터와 분리)
 """
 
 import argparse
@@ -14,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from carmind.data.judge import Judge, judge_all, load_done, verdict_matches
+from carmind.data.splits import final_qa_dir, load_holdout
 from carmind.data.synth_qa import anonymize, load_replacements
 
 parser = argparse.ArgumentParser()
@@ -27,7 +29,9 @@ parser.add_argument("--workers", type=int, default=8)
 parser.add_argument("--out", type=Path, default=Path("data"))
 parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
 parser.add_argument("--doc", default=None, help="이 문서만 처리 (예: manual_xxx_2025)")
+parser.add_argument("--splits", type=Path, default=Path("data/splits.yaml"), help="holdout 문서 목록 (평가셋으로 출력)")
 args = parser.parse_args()
+holdout = load_holdout(args.splits)
 
 load_dotenv()
 replacements = load_replacements(args.anonymize)
@@ -76,7 +80,8 @@ for path in sorted(args.candidates.glob("*.jsonl")):
     print(f"  실패 항목: {dict(fails)}")
     print(f"  이번 실행 비용 ${sum(r.cost_usd for r in new):.4f}, 토큰 입력 {sum(r.input_tokens for r in new):,} / 출력 {sum(r.output_tokens for r in new):,}")
     if not args.limit:
-        out = args.out / "processed" / "qa" / path.name
+        # holdout 문서는 build_sft가 읽는 processed/qa가 아니라 processed/eval로 보낸다
+        out = final_qa_dir(args.out / "processed", path.stem, holdout) / path.name
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in final), encoding="utf-8")
         print(f"  최종 데이터 → {out}")

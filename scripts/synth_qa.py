@@ -3,6 +3,7 @@
 uv run python scripts/synth_qa.py --limit 20                     # 파일럿 (무작위 20개)
 uv run python scripts/synth_qa.py --model gpt-6.1-sol --limit 20  # 다른 teacher와 비교
 uv run python scripts/synth_qa.py                                 # 전체
+uv run python scripts/synth_qa.py --doc <id> --include-holdout --limit 400  # hold-out 문서로 평가셋 만들기
 
 API 키는 .env의 OPENAI_API_KEY를 읽는다.
 """
@@ -13,10 +14,10 @@ import random
 from collections import Counter
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 from carmind.budget import DailyTokenBudget
+from carmind.data.splits import load_holdout
 from carmind.data.synth_qa import (
     PROMPT_VERSION,
     OpenAITeacher,
@@ -36,11 +37,12 @@ parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"
 parser.add_argument("--max-daily-tokens", type=int, default=None, help="오늘(UTC) 사용 토큰 상한 (무료 한도 보호)")
 parser.add_argument("--ledger", type=Path, default=Path("data/interim/usage_ledger.jsonl"))
 parser.add_argument("--splits", type=Path, default=Path("data/splits.yaml"), help="holdout 문서 목록 (생성 제외)")
+parser.add_argument("--doc", default=None, help="이 문서만 처리 (예: manual_xxx_2025)")
+# 평가셋을 만들 때만 명시적으로 켠다. 기본값은 지금처럼 hold-out 제외 (학습 데이터 오염 방지)
+parser.add_argument("--include-holdout", action="store_true", help="holdout 문서도 생성 (평가셋용)")
 args = parser.parse_args()
 
-holdout = set()
-if args.splits.exists():
-    holdout = set((yaml.safe_load(args.splits.read_text(encoding="utf-8")) or {}).get("holdout", []))
+holdout = load_holdout(args.splits)
 budget = DailyTokenBudget(args.ledger, args.model, args.max_daily_tokens)
 if args.max_daily_tokens:
     print(f"오늘 사용량 {budget.used:,} / 상한 {args.max_daily_tokens:,} 토큰 ({budget.pool})")
@@ -49,7 +51,9 @@ load_dotenv()
 teacher = OpenAITeacher(args.model, args.effort, load_replacements(args.anonymize))
 
 for path in sorted(args.chunks.glob("*.jsonl")):
-    if path.stem in holdout:
+    if args.doc and path.stem != args.doc:
+        continue
+    if path.stem in holdout and not args.include_holdout:
         print(f"[{path.stem}] holdout 문서 → 건너뜀")
         continue
     chunks = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
