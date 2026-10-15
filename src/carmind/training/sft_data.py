@@ -15,6 +15,8 @@ import random
 from collections import defaultdict
 from pathlib import Path
 
+from carmind.data.synth_qa import anonymize
+
 SYSTEM_CLOSED = (
     "당신은 자동차 취급설명서 내용을 잘 아는 정비 도우미입니다. "
     "차량 사용자의 질문에 정확하고 간결하게 답하세요. "
@@ -60,15 +62,26 @@ def split_by_chunk(qas: list[dict], val_ratio: float, seed: int) -> tuple[list[d
 
 
 def build(
-    qa_dir: Path, chunk_dir: Path, out_dir: Path, mode: str, val_ratio: float = 0.05, seed: int = 42
+    qa_dir: Path,
+    chunk_dir: Path,
+    out_dir: Path,
+    mode: str,
+    val_ratio: float = 0.05,
+    seed: int = 42,
+    replacements: list[tuple[str, str]] | None = None,
 ) -> dict[str, int]:
+    """replacements: QA 생성·필터·judge 단계와 같은 익명화 규칙 (data/anonymize.yaml).
+
+    QA의 질문·답은 이미 익명화돼 있지만 청크 원문은 매뉴얼 그대로라 브랜드명이 남아 있다.
+    rag 형식은 그 원문을 프롬프트에 넣으므로, 같은 규칙으로 치환해야 학습 데이터에 브랜드명이 새지 않는다.
+    """
     qas = [json.loads(line) for p in sorted(qa_dir.glob("*.jsonl")) for line in p.read_text(encoding="utf-8").splitlines()]
     chunks = {}
     if mode == "rag":
         for p in sorted(chunk_dir.glob("*.jsonl")):
             for line in p.read_text(encoding="utf-8").splitlines():
                 c = json.loads(line)
-                chunks[c["chunk_id"]] = c["text"]
+                chunks[c["chunk_id"]] = anonymize(c["text"], replacements or [])
 
     train, val = split_by_chunk(qas, val_ratio, seed)
     out_dir.mkdir(parents=True, exist_ok=True)

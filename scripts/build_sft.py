@@ -7,6 +7,7 @@ uv run python scripts/build_sft.py --mode rag      # data/processed/sft/rag/{tra
 import argparse
 from pathlib import Path
 
+from carmind.data.synth_qa import load_replacements
 from carmind.training.sft_data import build
 
 parser = argparse.ArgumentParser()
@@ -16,7 +17,10 @@ parser.add_argument("--chunks", type=Path, default=Path("data/processed/chunks")
 parser.add_argument("--out", type=Path, default=Path("data/processed/sft"))
 parser.add_argument("--val-ratio", type=float, default=0.05)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
 args = parser.parse_args()
 
-stats = build(args.qa, args.chunks, args.out / args.mode, args.mode, args.val_ratio, args.seed)
+stats = build(
+    args.qa, args.chunks, args.out / args.mode, args.mode, args.val_ratio, args.seed, load_replacements(args.anonymize)
+)
 print(f"[{args.mode}] 문서 {stats['docs']}권 → train {stats['train']} / val {stats['val']}")

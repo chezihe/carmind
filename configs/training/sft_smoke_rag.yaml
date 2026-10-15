@@ -1,0 +1,42 @@
+# sft_smoke.yaml(closed)과 같은 조건에서 형식만 rag(참고 문서 + 질문)로 바꾼 비교 실험.
+# 달라진 것: data 경로, max_seq_len, batch/accum 분할(실효 배치 16은 그대로), gradient_checkpointing, output_dir,
+# 그리고 시간 때문에 max_steps(→ warmup 비율 유지, log/eval 간격)
+# 맥북 smoke test: 작은 모델 + 데이터 일부로 LoRA SFT 파이프라인이 끝까지 도는지 확인한다.
+# 품질이 목표가 아니라 "loss가 내려가는지, 학습 전후 답변이 달라지는지"를 보는 용도.
+# GPU 서버에서는 model.name, runtime, data 크기, max_steps만 바꿔서 같은 스크립트로 돌린다.
+runtime:
+  device: auto     # auto | cuda | mps | cpu
+  # MPS에서 fp16은 fp32보다 겨우 ~10% 빠르고(loss 계산이 어차피 fp32로 올라감),
+  # grad scaler 없이 오래 학습하면 overflow로 loss가 NaN이 될 위험이 있다. 0.5B는 fp32로도 메모리 충분
+  dtype: float32
+  seed: 42
+
+model:
+  name: Qwen/Qwen2.5-0.5B-Instruct
+
+data:
+  train: data/processed/sft/rag/train.jsonl
+  val: data/processed/sft/rag/val.jsonl
+  max_train_samples: 2000   # null이면 전체
+  max_val_samples: 200
+  max_seq_len: 1024         # 청크가 들어가 중앙값 ~610, p95 ~700, 최대 ~890토큰. 768이면 0.5%가 잘려 1024로 둔다
+
+lora:
+  r: 16             # 저랭크 행렬의 차원. 클수록 표현력↑, 학습 파라미터↑
+  alpha: 32         # 스케일 = alpha / r. 보통 r의 2배
+  dropout: 0.05
+  # attention + MLP의 모든 선형층에 LoRA를 붙인다 (Qwen2/Llama 계열 이름)
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+train:
+  lr: 2.0e-4               # LoRA는 전체 미세조정(1e-5대)보다 큰 lr을 쓴다
+  warmup_steps: 2          # closed와 같은 비율(~11%). 10이면 15 step 중 2/3가 warmup이 된다
+  max_steps: 15            # 드라이런 ~98s/step(입력이 closed의 ~4배) → 학습만 ~25분 (15×16 = 240샘플 ≈ 0.12 epoch)
+  batch_size: 1            # 길이가 closed의 ~4배라 2는 checkpointing을 켜도 896토큰에서 스왑이 생긴다
+  grad_accum: 16           # 이만큼 모아서 한 번 업데이트 → 실효 배치 16 (closed와 같음)
+  max_grad_norm: 1.0
+  gradient_checkpointing: true   # 768토큰에서 끄면 MPS ~9.3GB + 스왑, 켜면 ~5.0GB. 속도는 ~10%만 느려짐
+  log_every: 2
+  eval_every: 5            # val 200개 평가 1회 ~3.5분 (closed는 ~30초)
+
+output_dir: outputs/sft_smoke_rag
