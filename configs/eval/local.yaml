@@ -1,0 +1,8 @@
+# 맥북 평가: 작은 모델로 평가 파이프라인이 끝까지 도는지 확인한다.
+# eval_generate.py --config로 읽고, 명령줄에 준 값이 이 값보다 우선한다 (키 = CLI 옵션 이름).
+# 평가셋 경로(--eval)는 문서 이름이 들어가므로 여기 적지 않고 명령줄로 준다.
+model: Qwen/Qwen2.5-0.5B-Instruct
+device: auto
+dtype: float32        # 학습(sft_smoke)과 같은 정밀도. 0.5B는 fp32로도 메모리 충분
+batch_size: 8
+max_new_tokens: 256

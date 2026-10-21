@@ -1,0 +1,6 @@
+# GPU 서버 평가: 7B 모델. 모델·장비만 바꾸고 스크립트는 맥북과 같다.
+model: Qwen/Qwen2.5-7B-Instruct
+device: cuda
+dtype: auto           # bf16 지원 GPU면 bfloat16
+batch_size: 32
+max_new_tokens: 256
