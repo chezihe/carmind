@@ -1,0 +1,39 @@
+# GPU 서버(RunPod) 본 학습: sft_7b_closed.yaml과 같은 조건에서 형식만 rag(참고 문서 + 질문)로 바꾼 비교 실험.
+# 달라진 것: data 경로, max_seq_len, gradient_checkpointing, output_dir (실효 배치 16·lr·LoRA는 그대로)
+# 메모리 기준: 48GB(L40S) 이상. 24GB GPU면 batch_size 1 + grad_accum 16 (그래도 빠듯함, docs/runpod.md 참고)
+runtime:
+  device: cuda
+  dtype: bfloat16
+  seed: 42
+
+model:
+  name: Qwen/Qwen2.5-7B-Instruct
+  attn_implementation: sdpa
+
+data:
+  train: data/processed/sft/rag/train.jsonl
+  val: data/processed/sft/rag/val.jsonl
+  max_train_samples: null   # 전체 16,176개
+  max_val_samples: null     # 전체 850개
+  max_seq_len: 1024         # 청크가 들어가 중앙값 ~610, p95 ~700, 최대 ~890토큰. 768이면 0.5%가 잘려 1024로 둔다
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+train:
+  lr: 2.0e-4
+  num_epochs: 1            # 약 1,011 step
+  warmup_steps: 30
+  batch_size: 4            # 입력이 closed의 ~4배. checkpointing을 켜면 4×1024토큰에서도 ~25GB
+  grad_accum: 4            # 실효 배치 16 (closed와 같음)
+  max_grad_norm: 1.0
+  gradient_checkpointing: true   # 끄면 4×1024에서 activation만 40GB 이상. 켜면 속도 ~25%↓ 대신 메모리 크게↓
+  log_every: 10
+  eval_every: 200          # val 850개(긴 입력) 평가 1회 1~2분
+  save_every_minutes: 15
+  keep_checkpoints: 2
+
+output_dir: outputs/sft_7b_rag

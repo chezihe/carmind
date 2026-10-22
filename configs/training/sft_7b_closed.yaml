@@ -1,0 +1,42 @@
+# GPU 서버(RunPod) 본 학습: Qwen2.5-7B-Instruct + 전체 학습 데이터, closed 형식(질문만 보고 답하기).
+# LoRA·lr·실효 배치는 맥북 smoke(sft_smoke.yaml)와 같게 두고 모델·데이터 크기·장비만 바꿨다.
+# 그래야 0.5B smoke 결과와 나란히 놓고 "모델 크기가 커지면 무엇이 달라지는지"를 말할 수 있다.
+# 메모리 기준: 48GB(L40S) 이상에서 그대로 돈다. 24GB GPU면 batch_size 2 + grad_accum 8 + gradient_checkpointing true.
+runtime:
+  device: cuda
+  dtype: bfloat16  # Ampere(A100) 이후 GPU는 bf16 지원. fp16과 달리 지수 범위가 fp32와 같아 grad scaler 없이도 overflow 걱정이 적다
+  seed: 42
+
+model:
+  name: Qwen/Qwen2.5-7B-Instruct
+  # PyTorch 내장 scaled-dot-product attention. flash-attn은 CUDA·torch 버전에 맞는 빌드가 필요해 의존성에 넣지 않았다
+  attn_implementation: sdpa
+
+data:
+  train: data/processed/sft/closed/train.jsonl
+  val: data/processed/sft/closed/val.jsonl
+  max_train_samples: null   # 전체 16,176개
+  max_val_samples: null     # 전체 850개
+  max_seq_len: 512          # 학습 데이터 최대 ~350토큰이라 거의 잘리지 않음
+
+lora:
+  r: 16             # 저랭크 행렬의 차원. 클수록 표현력↑, 학습 파라미터↑
+  alpha: 32         # 스케일 = alpha / r. 보통 r의 2배
+  dropout: 0.05
+  # attention + MLP의 모든 선형층에 LoRA를 붙인다 (Qwen2/Llama 계열 이름)
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+train:
+  lr: 2.0e-4               # LoRA는 전체 미세조정(1e-5대)보다 큰 lr을 쓴다
+  num_epochs: 1            # 16,176 / 16 → 약 1,011 step. max_steps는 데이터 수로 자동 계산
+  warmup_steps: 30         # 전체의 ~3%. smoke(90 step 중 10)처럼 11%로 두면 1,000 step 중 110 step이 warmup이라 너무 길다
+  batch_size: 4            # 한 번에 GPU에 올리는 샘플 수. 최악(4×512토큰)에도 checkpointing 없이 ~30GB
+  grad_accum: 4            # 실효 배치 16 = smoke와 같음 (lr 2e-4를 그대로 쓰기 위해)
+  max_grad_norm: 1.0
+  gradient_checkpointing: false  # 짧은 입력이라 메모리 여유가 있어 끈다 (켜면 ~25% 느려짐)
+  log_every: 10
+  eval_every: 200          # val 850개 평가 1회 수십 초. 학습 중 5번 + 시작·끝
+  save_every_minutes: 15   # 끊겨도 최대 15분어치만 다시 돌면 된다 (체크포인트 1개 ~0.5GB)
+  keep_checkpoints: 2
+
+output_dir: outputs/sft_7b_closed
