@@ -25,6 +25,8 @@ class RuntimeConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     name: str
+    # attention 구현. None이면 transformers 기본값(보통 sdpa). flash_attention_2는 패키지를 따로 설치해야 한다
+    attn_implementation: str | None = None
 
 
 class ChunkConfig(BaseModel):

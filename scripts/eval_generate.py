@@ -11,6 +11,7 @@ rag 모드는 문항을 만든 원문 청크를 그대로 넣는 oracle retrieva
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -47,6 +48,7 @@ if pre.config:
     # yaml 키는 CLI 옵션 이름과 같게 쓴다 (max_new_tokens 등). 명령줄에 준 값이 yaml보다 우선
     parser.set_defaults(**(yaml.safe_load(pre.config.read_text(encoding="utf-8")) or {}))
 args = parser.parse_args()
+sys.stdout.reconfigure(line_buffering=True)  # tee·파일로 보낼 때도 진행 상황이 바로 보이도록
 if not args.eval:
     parser.error("--eval이 필요합니다 (config 또는 명령줄)")
 
@@ -94,6 +96,9 @@ if meta["qa_ids"] != [q["qa_id"] for q in questions]:
 
 if todo:
     run_dir.mkdir(parents=True, exist_ok=True)
+    # 생성 전에 meta를 먼저 써 둔다. 첫 실행이 중간에 끊겨도 다음 실행이 check_resume으로 설정을 비교할 수 있다
+    if not meta_path.exists():
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     stats = Generator(cfg).run(todo, chunks, pred_path)
     # 이어하기로 여러 번 나눠 돌릴 수 있으므로 실행(session)마다 속도·커밋을 따로 남긴다
     meta["sessions"].append(
