@@ -22,13 +22,17 @@ from carmind.evaluation.generate import (
 )
 from carmind.evaluation.grade import (
     GRADER_VERSION,
+    INSTRUCTIONS,
+    RUBRIC_HASH,
     SCHEMA,
     Grader,
     estimate_cost,
     estimate_tokens,
     grade_all,
+    grades_filename,
     load_valid_grades,
     prediction_hash,
+    resolve_safety_omission,
 )
 from carmind.evaluation.metrics import (
     char_ngram_f1,
@@ -157,16 +161,59 @@ def test_estimate_cost_uses_pricing():
     assert est.cost_usd == pytest.approx((est.input_tokens * price["input"] + 200 * price["output"]) / 1e6)
 
 
+def _judged(omission=True, warnings=("주행 중 조작 금지",), correctness="partial"):
+    return {
+        "correctness": correctness, "hallucination": False, "reference_warnings": list(warnings),
+        "safety_omission": omission, "reason": "일부 누락",
+    }
+
+
 def test_grader_forces_safety_omission_false_for_non_safety():
-    data = {"correctness": "partial", "hallucination": False, "safety_omission": True, "reason": "일부 누락"}
+    data = _judged()
     assert Grader(FakeLLM(data), "j").grade(_item(type_="fact")).safety_omission is False
     g = Grader(FakeLLM(data), "j").grade(_item(type_="safety"))
     assert g.safety_omission is True and g.correctness == "partial" and g.cost_usd == 0.001
+    assert g.reference_warnings == ["주행 중 조작 금지"]
+
+
+def test_chunk_only_warning_is_not_omission():
+    # 판정자가 [원문]에만 있는 경고를 보고 true를 줬어도, [정답]에서 뽑은 경고가 없으면 누락이 아니다
+    g = Grader(FakeLLM(_judged(warnings=[])), "j").grade(_item(type_="safety"))
+    assert g.safety_omission is False and g.correctness == "partial"
+    assert resolve_safety_omission("safety", ["  "], True) is False  # 공백뿐인 항목도 경고 없음으로 본다
+    assert resolve_safety_omission("safety", ["화상 위험"], True) is True
+    assert resolve_safety_omission("safety", ["화상 위험"], False) is False  # 경고가 있어도 판정자가 false면 그대로
+    assert resolve_safety_omission("fact", ["화상 위험"], True) is False
+
+
+def test_rubric_mentions_reference_only_and_warnings_come_first():
+    assert "[원문]에만 있는 경고" in INSTRUCTIONS
+    keys = list(SCHEMA["properties"])
+    assert keys.index("reference_warnings") < keys.index("safety_omission")
+
+
+def test_grade_output_records_rubric_version(tmp_path):
+    out = tmp_path / grades_filename("j")
+    assert out.name == f"grades_j_{GRADER_VERSION}.jsonl"
+    grade_all([_item()], Grader(FakeLLM(_judged()), "j"), out, workers=1)
+    row = json.loads(out.read_text(encoding="utf-8"))
+    assert row["grader_version"] == GRADER_VERSION and row["rubric_hash"] == RUBRIC_HASH
+    assert row["reference_warnings"] == ["주행 중 조작 금지"]
+
+
+def test_old_rubric_grades_are_not_reused(tmp_path):
+    out = tmp_path / "grades.jsonl"
+    base = {"qa_id": "q0", "error": None, "pred_hash": prediction_hash("답")}
+    append_jsonl(out, {**base, "grader_version": "v1"})  # 예전 버전 (rubric_hash 없음)
+    append_jsonl(out, {**base, "grader_version": GRADER_VERSION, "rubric_hash": "00000000"})  # 문구만 바뀐 경우
+    assert load_valid_grades(out, [_item()]) == {}
+    append_jsonl(out, {**base, "grader_version": GRADER_VERSION, "rubric_hash": RUBRIC_HASH})
+    assert set(load_valid_grades(out, [_item()])) == {"q0"}
 
 
 def test_grade_resume_skips_valid_and_regrades_changed(tmp_path):
     out = tmp_path / "grades.jsonl"
-    llm = FakeLLM({"correctness": "correct", "hallucination": False, "safety_omission": False, "reason": "ok"})
+    llm = FakeLLM(_judged(omission=False, correctness="correct"))
     items = [_item("q0"), _item("q1")]
     grade_all(items, Grader(llm, "j"), out, workers=2)
     assert llm.calls == 2 and set(load_valid_grades(out, items)) == {"q0", "q1"}
@@ -175,7 +222,10 @@ def test_grade_resume_skips_valid_and_regrades_changed(tmp_path):
     changed = [_item("q0"), _item("q1", prediction="다른 답")]
     assert set(load_valid_grades(out, changed)) == {"q0"}
     # 오류로 끝난 판정도 재시도 대상
-    append_jsonl(out, {"qa_id": "q0", "error": "x", "grader_version": GRADER_VERSION, "pred_hash": prediction_hash("답")})
+    append_jsonl(out, {
+        "qa_id": "q0", "error": "x", "grader_version": GRADER_VERSION, "rubric_hash": RUBRIC_HASH,
+        "pred_hash": prediction_hash("답"),
+    })
     assert "q0" in load_valid_grades(out, items)  # 앞선 성공 기록은 그대로 유효
 
 
@@ -207,6 +257,26 @@ def test_aggregate_scores_and_safety_denominator():
     assert o["truncation_rate"] == pytest.approx(0.25) and o["exact_match"] == pytest.approx(0.5)
     assert r["by_type"]["fact"]["safety_omission"] is None
     assert r["by_type"]["safety"]["score"] == pytest.approx(0.75)
+
+
+def test_safety_omission_conditional_on_correctness():
+    def g(correctness, omission):
+        return {"type": "safety", "correctness": correctness, "hallucination": False, "safety_omission": omission}
+
+    grades = {
+        "c1": g("correct", False), "c2": g("correct", False), "c3": g("correct", False), "c4": g("correct", True),
+        "p1": g("partial", True), "p2": g("partial", False),
+        "i1": g("incorrect", True),
+        "f1": {"type": "fact", "correctness": "correct", "hallucination": False, "safety_omission": False},
+    }
+    preds = [_pred(q, gr["type"], "x", "y") for q, gr in grades.items()]
+    o = aggregate(preds, grades)["overall"]
+    assert o["safety_omission"] == pytest.approx(3 / 7)  # safety 7개 중 3개 (fact는 분모에서 빠짐)
+    assert o["n_safety_correct"] == 4 and o["safety_omission_correct"] == pytest.approx(1 / 4)
+    assert o["n_safety_partial"] == 2 and o["safety_omission_partial"] == pytest.approx(1 / 2)
+    # 해당 등급의 safety 문항이 없으면 비율은 None(표에서는 "-")
+    only_fact = aggregate([preds[-1]], {"f1": grades["f1"]})["overall"]
+    assert only_fact["n_safety_correct"] == 0 and only_fact["safety_omission_correct"] is None
 
 
 def test_aggregate_without_grades_has_free_metrics_only():

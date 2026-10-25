@@ -3,6 +3,7 @@
 uv run python scripts/eval_grade.py outputs/eval/<run>                 # 비용 추정 → 채점 → 리포트
 uv run python scripts/eval_grade.py outputs/eval/<run> --dry-run       # 비용 추정만 (API 호출 없음)
 uv run python scripts/eval_grade.py outputs/eval/<run> --no-judge      # 자동 지표만으로 리포트
+uv run python scripts/eval_grade.py outputs/eval/<run> --types safety  # safety 문항만 채점 → report_safety.json
 
 API를 부르기 전에 남은 문항의 비용을 추정해 출력하고, --max-cost를 넘으면 멈춘다.
 끊겼다가 다시 실행하면 판정이 없는(또는 답변이 바뀐) 문항만 채점한다.
@@ -18,9 +19,11 @@ from carmind.data.synth_qa import anonymize, load_replacements
 from carmind.evaluation.data import load_chunks, load_eval_set, read_jsonl
 from carmind.evaluation.grade import (
     GRADER_VERSION,
+    RUBRIC_HASH,
     Grader,
     estimate_cost,
     grade_all,
+    grades_filename,
     load_valid_grades,
 )
 from carmind.evaluation.report import aggregate, to_markdown, write_report
@@ -33,6 +36,9 @@ parser.add_argument("--max-cost", type=float, default=1.0, help="추정 비용(U
 parser.add_argument("--workers", type=int, default=8)
 parser.add_argument("--chunks", type=Path, default=Path("data/processed/chunks"))
 parser.add_argument("--anonymize", type=Path, default=Path("data/anonymize.yaml"))
+parser.add_argument(
+    "--types", nargs="+", default=None, help="이 유형의 문항만 채점·집계 (리포트는 report_<유형>.json으로 따로 저장)"
+)
 parser.add_argument("--dry-run", action="store_true", help="비용 추정만 하고 끝냄")
 parser.add_argument("--no-judge", action="store_true", help="채점 없이 자동 지표로만 리포트")
 args = parser.parse_args()
@@ -42,8 +48,13 @@ preds = read_jsonl(args.run_dir / "predictions.jsonl")
 missing = set(meta["qa_ids"]) - {p["qa_id"] for p in preds}
 if missing:
     print(f"주의: 아직 생성되지 않은 문항 {len(missing)}개 (eval_generate.py를 다시 실행하면 이어서 생성)")
+# 일부 유형만 다시 채점할 때는 집계도 그 유형만으로 하고, 전체 리포트(report.json)는 덮어쓰지 않는다
+report_name = "report"
+if args.types:
+    preds = [p for p in preds if p["type"] in args.types]
+    report_name = "report_" + "-".join(sorted(args.types))
 
-grades_path = args.run_dir / f"grades_{args.judge}.jsonl"
+grades_path = args.run_dir / grades_filename(args.judge)
 grades: dict[str, dict] = {}
 grading = None
 if not args.no_judge:
@@ -86,10 +97,13 @@ if not args.no_judge:
     grading = {
         "judge": args.judge,
         "grader_version": GRADER_VERSION,
+        "rubric_hash": RUBRIC_HASH,
+        "grades_file": grades_path.name,
+        "types": args.types,
         "effort": args.effort,
         "graded": len(grades),
         "errors": len(items) - len(grades),
-        "requests": len(rows),
+        "requests": len(rows),  # 같은 파일에 남은 다른 유형 판정까지 포함
         "input_tokens": sum(r["input_tokens"] for r in rows),
         "output_tokens": sum(r["output_tokens"] for r in rows),
         "cost_usd": sum(r["cost_usd"] for r in rows),
@@ -97,6 +111,6 @@ if not args.no_judge:
     }
 
 report = {"meta": meta, "grading": grading, **aggregate(preds, grades)}
-write_report(args.run_dir, report)
+write_report(args.run_dir, report, report_name)
 print(to_markdown(report))
-print(f"저장: {args.run_dir}/report.json, report.md")
+print(f"저장: {args.run_dir}/{report_name}.json, {report_name}.md")

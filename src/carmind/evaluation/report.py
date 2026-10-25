@@ -7,6 +7,9 @@ correct 비율만 보면 "반쯤 맞힌" 개선이 안 보이고, 세 비율을 
 비율의 분모
 - correctness·환각: 판정이 성공한 문항 수 (판정 오류 문항은 빼고 따로 개수를 적는다)
 - safety_omission: safety 유형 문항 중 판정 성공한 수 (다른 유형에는 의미가 없음)
+- safety_omission | correct, | partial: safety 문항 중 correctness가 그 등급인 수.
+  틀린 답은 경고도 거의 다 빠뜨리므로 전체 누락률은 "오답률"과 겹친다. 등급을 고정하고 보면
+  "답은 맞혔는데 경고만 빠뜨렸나"를 따로 볼 수 있다
 - 자동 지표: 생성된 모든 문항
 """
 
@@ -45,6 +48,10 @@ def summarize(preds: list[dict], grades: dict[str, dict]) -> dict:
         safety = [g for g in graded if g["type"] == "safety"]
         out["n_safety_graded"] = len(safety)
         out["safety_omission"] = _mean([float(g["safety_omission"]) for g in safety])
+        for label in ("correct", "partial"):
+            same = [g for g in safety if g["correctness"] == label]
+            out[f"n_safety_{label}"] = len(same)
+            out[f"safety_omission_{label}"] = _mean([float(g["safety_omission"]) for g in same])
     return out
 
 
@@ -68,6 +75,8 @@ COLUMNS = [
     ("incorrect", "incorrect", "pct"),
     ("hallucination", "hallucination", "pct"),
     ("safety_omission", "safety omission", "pct"),
+    ("safety_omission_correct", "safety omission given correct", "pct"),
+    ("safety_omission_partial", "safety omission given partial", "pct"),
     ("exact_match", "exact match", "pct"),
     ("char_f1", "char-bigram F1", "f3"),
     ("mean_chars", "mean chars", "f0"),
@@ -103,7 +112,7 @@ def to_markdown(report: dict) -> str:
     ]
     if g := report.get("grading"):
         lines.append(
-            f"- judge: `{g['judge']}` ({g['grader_version']}), 비용 ${g['cost_usd']:.4f}, "
+            f"- judge: `{g['judge']}` ({g['grader_version']}, rubric `{g.get('rubric_hash')}`), 비용 ${g['cost_usd']:.4f}, "
             f"토큰 입력 {g['input_tokens']:,} / 출력 {g['output_tokens']:,}, 판정 오류 {g['errors']}개"
         )
     groups = {"overall": report["overall"], **report["by_type"]}
@@ -113,9 +122,9 @@ def to_markdown(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_report(run_dir: Path, report: dict) -> None:
-    (run_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    (run_dir / "report.md").write_text(to_markdown(report), encoding="utf-8")
+def write_report(run_dir: Path, report: dict, name: str = "report") -> None:
+    (run_dir / f"{name}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    (run_dir / f"{name}.md").write_text(to_markdown(report), encoding="utf-8")
 
 
 def compare_table(reports: dict[str, dict]) -> str:
