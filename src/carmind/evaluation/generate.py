@@ -6,6 +6,10 @@
             정답이 들어 있는 문서를 그대로 넣어 주는 "oracle retrieval" 설정이라,
             검색이 완벽할 때의 상한(upper bound)을 재는 셈이다. 실제 검색기(retriever)를 붙인
             평가는 나중에 따로 하고, 그때 점수가 여기서 얼마나 떨어지는지가 검색 품질의 비용이 된다.
+    rag_retrieved: 실제 검색기(carmind.retrieval)가 찾은 상위 k개 청크를 순위 순으로 이어 [참고 문서]로 준다.
+            프롬프트 형식은 rag와 똑같고 문서 내용만 다르다. rag와의 점수 차이 = 검색 오류의 비용.
+            검색은 생성 전에 스크립트에서 끝내고 문항별 컨텍스트를 run(contexts=...)으로 넘긴다
+            (임베딩 모델을 내린 뒤 생성 모델을 올려 메모리를 아끼려고).
 
 프롬프트는 학습 때와 같은 to_messages()로 만든다. 시스템 프롬프트나 [참고 문서] 형식이 한 글자라도
 다르면 "학습한 형식으로 물었을 때"의 성능이 아니게 되기 때문이다.
@@ -33,6 +37,9 @@ class GenConfig:
     repetition_penalty: float = 1.0
     device: str = "auto"
     dtype: str = "auto"
+    # rag_retrieved 전용 검색 설정 (method, top_k, scope, 임베딩 모델 등). 다른 모드에서는 None이고
+    # identity·meta에서 빠지므로 closed/rag 실행의 설정 비교는 이 필드가 생기기 전과 똑같다
+    retrieval: dict | None = None
     # 실행마다 바뀌어도 결과에 영향이 없는 값은 아래 필드에 둔다 (meta 비교에서 제외)
     extra: dict = field(default_factory=dict)
 
@@ -45,11 +52,25 @@ class GenConfig:
         d = asdict(self)
         for k in ("batch_size", "device", "extra"):
             d.pop(k)
+        if d["retrieval"] is None:
+            d.pop("retrieval")
+        return d
+
+    def meta(self) -> dict:
+        """meta.json의 generation 항목. identity와 같은 이유로 retrieval이 None이면 뺀다."""
+        d = {k: v for k, v in asdict(self).items() if k != "extra"}
+        if d["retrieval"] is None:
+            d.pop("retrieval")
         return d
 
 
 def prompt_messages(qa: dict, mode: str, chunk_text: str | None) -> list[dict]:
-    """학습 데이터와 같은 메시지에서 정답(assistant 턴)만 뺀다."""
+    """학습 데이터와 같은 메시지에서 정답(assistant 턴)만 뺀다.
+
+    rag_retrieved는 학습 때의 rag 형식을 그대로 쓰고 chunk_text 자리에 검색된 청크(들)를 넣는다.
+    """
+    if mode == "rag_retrieved":
+        return to_messages(qa, "rag", chunk_text)[:-1]
     return to_messages(qa, mode, chunk_text)[:-1]
 
 
@@ -142,10 +163,20 @@ class Generator:
             results.append({"prediction": text, "n_tokens": n, "truncated": truncated})
         return results
 
-    def run(self, questions: list[dict], chunks: dict[str, str], out_path: Path) -> dict:
-        """questions를 배치로 생성해 한 줄씩 out_path에 덧붙인다. 속도 통계를 돌려준다."""
+    def run(self, questions: list[dict], chunks: dict[str, str], out_path: Path,
+            contexts: dict[str, dict] | None = None) -> dict:
+        """questions를 배치로 생성해 한 줄씩 out_path에 덧붙인다. 속도 통계를 돌려준다.
+
+        contexts: rag_retrieved 전용. qa_id → {"text": 이어 붙인 검색 청크, 그 밖의 기록용 필드(retrieved 등)}.
+        기록용 필드는 결과 행에 그대로 붙여 나중에 검색 실패 문항을 따로 볼 수 있게 한다.
+        """
         mode = self.cfg.mode
-        items = [(q, prompt_messages(q, mode, chunks.get(q["chunk_id"]) if mode == "rag" else None)) for q in questions]
+        if mode == "rag_retrieved":
+            items = [(q, prompt_messages(q, mode, contexts[q["qa_id"]]["text"])) for q in questions]
+        else:
+            items = [
+                (q, prompt_messages(q, mode, chunks.get(q["chunk_id"]) if mode == "rag" else None)) for q in questions
+            ]
         # 길이가 비슷한 프롬프트끼리 묶으면 패딩이 줄어 배치가 빨라진다 (결과 파일 순서는 상관없음)
         items.sort(key=lambda x: len(x[1][-1]["content"]))
         bs = self.cfg.batch_size
@@ -154,10 +185,10 @@ class Generator:
             batch = items[i:i + bs]
             for (q, _), r in zip(batch, self._generate_batch([m for _, m in batch]), strict=True):
                 total_tokens += r["n_tokens"]
-                append_jsonl(
-                    out_path,
-                    {"qa_id": q["qa_id"], "type": q["type"], "question": q["question"], "reference": q["answer"], **r},
-                )
+                row = {"qa_id": q["qa_id"], "type": q["type"], "question": q["question"], "reference": q["answer"], **r}
+                if mode == "rag_retrieved":
+                    row.update({k: v for k, v in contexts[q["qa_id"]].items() if k != "text"})
+                append_jsonl(out_path, row)
             done = min(i + bs, len(items))
             elapsed = time.time() - start
             print(f"  {done}/{len(items)}  {elapsed:.0f}s  ({total_tokens / max(elapsed, 1e-9):.1f} tok/s)", flush=True)
