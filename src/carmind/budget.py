@@ -8,7 +8,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-# 같은 무료 한도를 공유하는 모델 묶음. 여기에 없는 모델은 모델 이름이 곧 pool
+# 같은 무료 한도를 공유하는 모델 묶음. 여기에 없는 모델(Claude 포함)은 모델 이름이 곧 pool
 FREE_POOLS = {
     "gpt-5.4-mini": "openai-free-small",
     "gpt-5.4-nano": "openai-free-small",

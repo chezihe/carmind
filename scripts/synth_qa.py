@@ -2,10 +2,11 @@
 
 uv run python scripts/synth_qa.py --limit 20                     # 파일럿 (무작위 20개)
 uv run python scripts/synth_qa.py --model gpt-6.1-sol --limit 20  # 다른 teacher와 비교
+uv run python scripts/synth_qa.py --model claude-sonnet-5-5 --limit 20  # Claude teacher
 uv run python scripts/synth_qa.py                                 # 전체
 uv run python scripts/synth_qa.py --doc <id> --include-holdout --limit 400  # hold-out 문서로 평가셋 만들기
 
-API 키는 .env의 OPENAI_API_KEY를 읽는다.
+API 키는 .env의 OPENAI_API_KEY를 읽는다. claude-* 모델은 ANTHROPIC_API_KEY를 읽는다.
 """
 
 import argparse
@@ -20,7 +21,7 @@ from carmind.budget import DailyTokenBudget
 from carmind.data.splits import load_holdout
 from carmind.data.synth_qa import (
     PROMPT_VERSION,
-    OpenAITeacher,
+    Teacher,
     generate_all,
     load_replacements,
 )
@@ -48,7 +49,7 @@ if args.max_daily_tokens:
     print(f"오늘 사용량 {budget.used:,} / 상한 {args.max_daily_tokens:,} 토큰 ({budget.pool})")
 
 load_dotenv()
-teacher = OpenAITeacher(args.model, args.effort, load_replacements(args.anonymize))
+teacher = Teacher(args.model, args.effort, load_replacements(args.anonymize))
 
 for path in sorted(args.chunks.glob("*.jsonl")):
     if args.doc and path.stem != args.doc:

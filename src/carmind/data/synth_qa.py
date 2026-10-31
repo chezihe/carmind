@@ -1,7 +1,7 @@
 """teacher 모델로 청크에서 합성 QA(질문-답변) 학습 데이터를 만든다.
 
 흐름:
-    청크 → teacher(OpenAI Responses API, JSON 스키마 구조화 출력) → QA 0~4개 + 근거(evidence)
+    청크 → teacher(OpenAI 또는 Claude, JSON 스키마 구조화 출력) → QA 0~4개 + 근거(evidence)
     → 근거 검증: evidence가 청크 원문에 실제로 있는지 확인 (지어낸 답 걸러내기)
     → data/interim/qa/<model>/<doc_id>.jsonl (청크 1개 = 1줄)
 
@@ -16,11 +16,10 @@ from functools import cache
 from pathlib import Path
 from typing import NamedTuple
 
-import openai
 import yaml
 
 from carmind.budget import DailyTokenBudget
-from carmind.llm import StructuredLLM
+from carmind.llm import LLM_ERRORS, failed_usage, make_llm
 
 PROMPT_VERSION = "v3"  # v2: 지시어 질문·문서 언급·추가 서술 금지, 브랜드명 코드 치환 / v3: 길이 하한 제거, 마무리 문장 금지
 
@@ -167,18 +166,19 @@ def is_grounded(evidence: list[str], chunk_text: str) -> bool:
     return bool(evidence) and all(squash(e) in target for e in evidence if e.strip())
 
 
-class OpenAITeacher:
+class Teacher:
     def __init__(self, model: str, effort: str = "low", replacements: list[tuple[str, str]] | None = None):
         self.model = model
-        self.llm = StructuredLLM(model, effort)
+        self.llm = make_llm(model, effort)
         self.replacements = replacements or []
 
     def generate(self, chunk: dict) -> ChunkResult:
         result = ChunkResult(chunk["chunk_id"], chunk["doc_id"], self.model, PROMPT_VERSION)
         try:
             resp = self.llm.call(INSTRUCTIONS, chunk["text"], SCHEMA, "qa", f"carmind-synth-qa-{PROMPT_VERSION}")
-        except openai.APIError as e:
+        except LLM_ERRORS as e:
             result.error = f"{type(e).__name__}: {e}"
+            result.input_tokens, result.output_tokens, result.cost_usd = failed_usage(e)
             return result
 
         result.input_tokens, result.output_tokens, result.cost_usd = (
@@ -205,7 +205,7 @@ def load_done(out_path: Path) -> set[str]:
 
 def generate_all(
     chunks: list[dict],
-    teacher: OpenAITeacher,
+    teacher: Teacher,
     out_path: Path,
     workers: int = 8,
     budget: DailyTokenBudget | None = None,

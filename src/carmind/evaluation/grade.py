@@ -17,10 +17,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import openai
-
 from carmind.evaluation.data import append_jsonl, read_jsonl
-from carmind.llm import PRICING
+from carmind.llm import LLM_ERRORS, PRICING, failed_usage
 
 # 채점 기준(지시문·스키마)을 바꾸면 버전을 올린다. 버전과 지시문 지문(RUBRIC_HASH)이 판정 1줄마다 남고,
 # 이어하기 때 둘 다 같은 판정만 재사용하므로 예전 기준의 판정이 조용히 섞이지 않는다.
@@ -69,7 +67,11 @@ RUBRIC_HASH = hashlib.sha1(
 
 
 def grades_filename(judge: str) -> str:
-    """버전마다 다른 파일에 쓴다. 기준을 바꿔 다시 채점해도 예전 판정 파일은 그대로 남는다."""
+    """버전마다 다른 파일에 쓴다. 기준을 바꿔 다시 채점해도 예전 판정 파일은 그대로 남는다.
+
+    judge 모델 이름도 파일명에 들어가므로 Claude와 OpenAI 판정은 섞이지 않는다.
+    판정자가 다르면 점수 기준도 달라지므로 run끼리는 같은 judge의 리포트만 비교한다.
+    """
     return f"grades_{judge}_{GRADER_VERSION}.jsonl"
 
 
@@ -111,12 +113,16 @@ class CostEstimate:
 
 
 def estimate_cost(items: list[dict], model: str, output_tokens_per_item: int = EST_OUTPUT_TOKENS) -> CostEstimate:
-    """캐시 할인 없이(최악의 경우) 계산한다. 실제로는 지시문이 캐시되어 이보다 싸다."""
+    """캐시 할인 없이(최악의 경우) 계산한다. 실제로는 지시문이 캐시되어 이보다 싸다.
+
+    Claude는 캐시 쓰기에 할증이 붙으므로 입력 단가를 쓰기 단가로 잡아야 최악의 경우가 된다.
+    """
     instr = estimate_tokens(INSTRUCTIONS)
     inp = sum(instr + estimate_tokens(build_input(it)) + REQUEST_OVERHEAD_TOKENS for it in items)
     out = output_tokens_per_item * len(items)
     price = PRICING[model]
-    return CostEstimate(len(items), inp, out, (inp * price["input"] + out * price["output"]) / 1e6)
+    input_price = price.get("cache_write", price["input"])
+    return CostEstimate(len(items), inp, out, (inp * input_price + out * price["output"]) / 1e6)
 
 
 def prediction_hash(prediction: str) -> str:
@@ -156,7 +162,7 @@ class Grade:
 
 class Grader:
     def __init__(self, llm, judge: str):
-        """llm: StructuredLLM 또는 같은 call()을 가진 객체 (테스트에서는 가짜 객체를 넣는다)."""
+        """llm: make_llm()의 결과 또는 같은 call()을 가진 객체 (테스트에서는 가짜 객체를 넣는다)."""
         self.llm = llm
         self.judge = judge
 
@@ -168,8 +174,9 @@ class Grader:
             resp = self.llm.call(
                 INSTRUCTIONS, build_input(item), SCHEMA, "grade", f"carmind-eval-grade-{GRADER_VERSION}-{RUBRIC_HASH}"
             )
-        except openai.APIError as e:
+        except LLM_ERRORS as e:
             g.error = f"{type(e).__name__}: {e}"
+            g.input_tokens, g.output_tokens, g.cost_usd = failed_usage(e)
             return g
         d = resp.data
         g.correctness, g.hallucination, g.reason = d["correctness"], d["hallucination"], d["reason"]

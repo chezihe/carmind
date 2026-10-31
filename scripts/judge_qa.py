@@ -2,6 +2,7 @@
 
 uv run python scripts/judge_qa.py --judge gpt-6-luna --limit 20   # 파일럿 (청크 20개)
 uv run python scripts/judge_qa.py --judge gpt-6-luna              # 전체
+uv run python scripts/judge_qa.py --judge claude-haiku-5-5 --limit 20  # Claude judge (ANTHROPIC_API_KEY)
 출력: data/interim/qa_judged/<judge>/<doc>.jsonl (판정), data/processed/qa/<doc>.jsonl (통과한 최종 QA)
       holdout 문서(data/splits.yaml)는 data/processed/eval/<doc>.jsonl (평가셋, 학습 데이터와 분리)
 """

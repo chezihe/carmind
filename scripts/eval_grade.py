@@ -4,6 +4,7 @@ uv run python scripts/eval_grade.py outputs/eval/<run>                 # 비용 
 uv run python scripts/eval_grade.py outputs/eval/<run> --dry-run       # 비용 추정만 (API 호출 없음)
 uv run python scripts/eval_grade.py outputs/eval/<run> --no-judge      # 자동 지표만으로 리포트
 uv run python scripts/eval_grade.py outputs/eval/<run> --types safety  # safety 문항만 채점 → report_safety.json
+uv run python scripts/eval_grade.py outputs/eval/<run> --judge claude-haiku-5-5  # Claude judge (ANTHROPIC_API_KEY)
 
 API를 부르기 전에 남은 문항의 비용을 추정해 출력하고, --max-cost를 넘으면 멈춘다.
 끊겼다가 다시 실행하면 판정이 없는(또는 답변이 바뀐) 문항만 채점한다.
@@ -84,9 +85,9 @@ if not args.no_judge:
         raise SystemExit(0)
     if todo:
         load_dotenv()
-        from carmind.llm import StructuredLLM
+        from carmind.llm import make_llm
 
-        new = grade_all(todo, Grader(StructuredLLM(args.judge, args.effort), args.judge), grades_path, args.workers)
+        new = grade_all(todo, Grader(make_llm(args.judge, args.effort), args.judge), grades_path, args.workers)
         errors = [g for g in new if g.error]
         if errors:
             print(f"판정 오류 {len(errors)}개 (예: {errors[0].error}). 다시 실행하면 그 문항만 재시도합니다.")

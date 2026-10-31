@@ -14,9 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import openai
-
-from carmind.llm import StructuredLLM
+from carmind.llm import LLM_ERRORS, failed_usage, make_llm
 
 JUDGE_VERSION = "v2"  # v2: 브랜드명 → "제조사" 일반화도 허용
 
@@ -96,7 +94,7 @@ def build_input(chunk_text: str, qas: list[dict]) -> str:
 class Judge:
     def __init__(self, model: str, effort: str = "low"):
         self.model = model
-        self.llm = StructuredLLM(model, effort)
+        self.llm = make_llm(model, effort)
 
     def judge_chunk(self, chunk: dict, qas: list[dict]) -> JudgeResult:
         result = JudgeResult(chunk["chunk_id"], self.model, JUDGE_VERSION)
@@ -104,8 +102,9 @@ class Judge:
             resp = self.llm.call(
                 INSTRUCTIONS, build_input(chunk["text"], qas), SCHEMA, "judge", f"carmind-judge-{JUDGE_VERSION}"
             )
-        except openai.APIError as e:
+        except LLM_ERRORS as e:
             result.error = f"{type(e).__name__}: {e}"
+            result.input_tokens, result.output_tokens, result.cost_usd = failed_usage(e)
             return result
 
         result.input_tokens, result.output_tokens, result.cost_usd = (

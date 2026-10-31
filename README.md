@@ -19,6 +19,18 @@ Agent가 매뉴얼 검색·DTC 조회 등 도구를 활용해 진단과 조치 �
 | 4 | 서빙 최적화 (prefix caching, 양자화, 부하 테스트, prefix-aware routing) | ⬜ |
 | 5 | 도메인 Agent (LangGraph, MCP 도구, agent 평가) | ⬜ |
 
+## LLM 제공자 선택
+
+QA 생성·판정·채점은 기본값이 OpenAI입니다. 모델 이름이 `claude-`로 시작하면 Claude로 호출합니다 (`.env`에 `ANTHROPIC_API_KEY` 필요).
+
+```bash
+uv run python scripts/synth_qa.py --model claude-sonnet-5-5 --limit 20
+uv run python scripts/judge_qa.py --judge claude-haiku-5-5 --limit 20
+uv run python scripts/eval_grade.py outputs/eval/<run> --judge claude-haiku-5-5 --dry-run
+```
+
+채점 결과는 judge 이름별 파일(`grades_<judge>_<버전>.jsonl`)에 쌓입니다. 판정자가 다르면 점수 기준도 달라지므로 run끼리는 같은 judge의 리포트만 비교합니다. 가격은 `src/carmind/llm.py`의 `PRICING`에서 관리합니다.
+
 ## 디렉토리 구조
 
 ```
