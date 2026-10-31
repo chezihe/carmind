@@ -54,6 +54,8 @@ parser.add_argument("--repetition-penalty", type=float, default=1.0)
 parser.add_argument("--batch-size", type=int, default=8)
 parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
 parser.add_argument("--dtype", default="auto", choices=["auto", "bfloat16", "float16", "float32"])
+parser.add_argument("--chat-template-kwargs", type=json.loads, default=None,
+                    help='apply_chat_template 옵션 JSON (예: \'{"enable_thinking": false}\'). 학습 때와 같아야 한다')
 parser.add_argument("--run", default=None, help="실행 이름 (기본: 모델·adapter·모드로 자동)")
 parser.add_argument("--out", type=Path, default=Path("outputs/eval"))
 pre, _ = parser.parse_known_args()
@@ -89,6 +91,7 @@ cfg = GenConfig(
     device=args.device,
     dtype=args.dtype,
     retrieval=retrieval,
+    chat_template_kwargs=args.chat_template_kwargs,
 )
 check_resume(meta_path, cfg)
 

@@ -29,5 +29,5 @@ rsync -avz --partial "${excludes[@]}" \
   "root@${HOST}:${REMOTE_DIR}/" outputs/
 
 echo "== 받은 평가 실행"
-ls -d outputs/eval/qwen7b_* 2>/dev/null || echo "(아직 없음)"
+ls -d outputs/eval/qwen* 2>/dev/null || echo "(아직 없음)"
 echo "채점: uv run python scripts/eval_grade.py outputs/eval/<run> --dry-run   # 비용 확인 후 --dry-run 빼고 실행"

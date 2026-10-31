@@ -43,7 +43,8 @@ class LoraConfig(BaseModel):
     r: int = 16
     alpha: int = 32
     dropout: float = 0.05
-    target_modules: list[str]
+    # 이름 목록이면 이름 끝이 일치하는 모듈, 문자열이면 전체 이름에 대한 정규식 (peft 규칙)
+    target_modules: list[str] | str
 
 
 class TrainConfig(BaseModel):
@@ -113,8 +114,8 @@ def load_messages(path: Path, limit: int | None, seed: int) -> list[dict]:
     return rows
 
 
-def tokenize_rows(rows: list[dict], tokenizer, max_seq_len: int) -> list[dict]:
-    encoded = [encode_example(r["messages"], tokenizer, max_seq_len) for r in rows]
+def tokenize_rows(rows: list[dict], tokenizer, max_seq_len: int, template_kwargs: dict | None = None) -> list[dict]:
+    encoded = [encode_example(r["messages"], tokenizer, max_seq_len, template_kwargs) for r in rows]
     return [e for e in encoded if e is not None]
 
 
@@ -180,6 +181,9 @@ def resume_identity(cfg: SFTConfig) -> dict:
     for k in ("log_every", "eval_every", "save_every_steps", "save_every_minutes", "keep_checkpoints"):
         d["train"].pop(k)
     d.pop("output_dir")
+    # None이면 키를 빼서, 이 필드가 생기기 전에 저장한 체크포인트도 같은 실행으로 인식한다
+    if d["model"]["chat_template_kwargs"] is None:
+        d["model"].pop("chat_template_kwargs")
     return d
 
 
@@ -331,8 +335,8 @@ def train(cfg: SFTConfig, max_steps: int | None = None) -> dict:
 
     train_rows = load_messages(cfg.data.train, cfg.data.max_train_samples, cfg.runtime.seed)
     val_rows = load_messages(cfg.data.val, cfg.data.max_val_samples, cfg.runtime.seed)
-    train_ex = tokenize_rows(train_rows, tokenizer, cfg.data.max_seq_len)
-    val_ex = tokenize_rows(val_rows, tokenizer, cfg.data.max_seq_len)
+    train_ex = tokenize_rows(train_rows, tokenizer, cfg.data.max_seq_len, cfg.model.chat_template_kwargs)
+    val_ex = tokenize_rows(val_rows, tokenizer, cfg.data.max_seq_len, cfg.model.chat_template_kwargs)
     print(f"데이터: train {len(train_ex)} / val {len(val_ex)} (max_seq_len {cfg.data.max_seq_len})")
 
     # num_epochs로 정했으면 실제 샘플 수(너무 길어 버린 것 제외)로 optimizer step 수를 계산한다

@@ -40,6 +40,8 @@ class GenConfig:
     # rag_retrieved 전용 검색 설정 (method, top_k, scope, 임베딩 모델 등). 다른 모드에서는 None이고
     # identity·meta에서 빠지므로 closed/rag 실행의 설정 비교는 이 필드가 생기기 전과 똑같다
     retrieval: dict | None = None
+    # apply_chat_template 옵션 (Qwen3.5의 enable_thinking 등). 학습 때와 같아야 하고, None이면 identity·meta에서 빠진다
+    chat_template_kwargs: dict | None = None
     # 실행마다 바뀌어도 결과에 영향이 없는 값은 아래 필드에 둔다 (meta 비교에서 제외)
     extra: dict = field(default_factory=dict)
 
@@ -52,15 +54,17 @@ class GenConfig:
         d = asdict(self)
         for k in ("batch_size", "device", "extra"):
             d.pop(k)
-        if d["retrieval"] is None:
-            d.pop("retrieval")
-        return d
+        return self._without_unset(d)
 
     def meta(self) -> dict:
-        """meta.json의 generation 항목. identity와 같은 이유로 retrieval이 None이면 뺀다."""
-        d = {k: v for k, v in asdict(self).items() if k != "extra"}
-        if d["retrieval"] is None:
-            d.pop("retrieval")
+        """meta.json의 generation 항목. identity와 같은 이유로 None인 선택 필드는 뺀다."""
+        return self._without_unset({k: v for k, v in asdict(self).items() if k != "extra"})
+
+    @staticmethod
+    def _without_unset(d: dict) -> dict:
+        for k in ("retrieval", "chat_template_kwargs"):
+            if d[k] is None:
+                d.pop(k)
         return d
 
 
@@ -72,6 +76,20 @@ def prompt_messages(qa: dict, mode: str, chunk_text: str | None) -> list[dict]:
     if mode == "rag_retrieved":
         return to_messages(qa, "rag", chunk_text)[:-1]
     return to_messages(qa, mode, chunk_text)[:-1]
+
+
+def render_prompt(tokenizer, messages: list[dict], template_kwargs: dict | None = None) -> str:
+    """생성용 프롬프트 문자열. 학습의 encode_example과 같은 옵션으로 렌더링한다.
+
+    프롬프트가 "<think>\\n"에서 끝나면 모델이 추론 과정부터 쓰기 시작한다. 답변이 max_new_tokens 안에 안 끝나고
+    학습 때 프롬프트와도 달라지므로, 옵션을 빠뜨린 실행은 시작 전에 멈춘다.
+    """
+    prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, **(template_kwargs or {})
+    )
+    if prompt.endswith("<think>\n"):
+        raise ValueError("프롬프트가 생각 모드입니다. --chat-template-kwargs로 enable_thinking: false를 주세요.")
+    return prompt
 
 
 def check_resume(meta_path: Path, cfg: GenConfig) -> None:
@@ -138,9 +156,7 @@ class Generator:
         self.stop_ids = {t for t in [*eos, self.tokenizer.eos_token_id] if t is not None}
 
     def _generate_batch(self, batch_messages: list[list[dict]]) -> list[dict]:
-        prompts = [
-            self.tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=True) for m in batch_messages
-        ]
+        prompts = [render_prompt(self.tokenizer, m, self.cfg.chat_template_kwargs) for m in batch_messages]
         inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
             out = self.model.generate(

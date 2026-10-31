@@ -1,0 +1,9 @@
+# GPU 서버 평가: Qwen3.5-9B. runpod.yaml과 모델·생각 모드 설정만 다르다.
+model: Qwen/Qwen3.5-9B
+device: cuda
+dtype: auto           # bf16 지원 GPU면 bfloat16
+batch_size: 32
+max_new_tokens: 256
+# 9B 템플릿은 기본이 생각 모드다. 끄면 프롬프트가 빈 think 블록으로 끝나 학습 때와 같아진다
+chat_template_kwargs:
+  enable_thinking: false

@@ -22,3 +22,5 @@ export PYTHONUNBUFFERED=1
 
 # 7B 모델 기본값
 export MODEL_7B="${MODEL_7B:-Qwen/Qwen2.5-7B-Instruct}"
+# RUN_PROFILE=9b로 실행할 때 쓰는 모델 (setup.sh가 받는다)
+export MODEL_9B="${MODEL_9B:-Qwen/Qwen3.5-9B}"

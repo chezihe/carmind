@@ -10,6 +10,8 @@
 #      PyPI의 리눅스 torch 휠은 CUDA 13.0용이라 드라이버가 CUDA 13 미만이면 cu126 휠로 바꿔 설치한다
 #   4. 데이터 tarball 풀기 (/workspace/carmind_data.tar.gz가 있고 아직 안 풀었으면)
 #   5. torch.cuda 동작 확인 → 7B 모델 미리 다운로드 (HF 캐시는 /workspace 아래)
+#
+#   RUN_PROFILE=9b bash scripts/runpod/setup.sh    # 같은 일을 하되 7B 대신 Qwen3.5-9B를 받는다 (디스크 여유부터 확인)
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,6 +21,12 @@ source scripts/runpod/env.sh
 
 DATA_TAR="${DATA_TAR:-/workspace/carmind_data.tar.gz}"
 TORCH_VERSION="2.14.1"   # uv.lock에 고정된 버전과 같아야 한다
+
+# 7B 실행이 끝난 뒤 이어서 준비할 때: 아래 uv sync가 도는 중인 학습의 패키지(torch)를 바꿔 치우지 않게 먼저 확인한다
+if [[ "${RUN_PROFILE:-7b}" != 7b ]] && pgrep -f 'scripts/(train_sft|eval_generate)\.py' >/dev/null 2>&1; then
+  echo "학습·평가가 아직 돌고 있습니다. 끝난 뒤 다시 실행하세요." >&2
+  exit 1
+fi
 
 echo "== 1. 시스템 도구"
 missing=()
@@ -74,9 +82,28 @@ x = torch.randn(1024, 1024, device="cuda", dtype=torch.bfloat16)
 print("행렬곱 확인:", float((x @ x).float().abs().mean()))
 PY
 
+RUN_PROFILE="${RUN_PROFILE:-7b}"
+case "$RUN_PROFILE" in
+  7b) MODEL="$MODEL_7B" ;;
+  9b)
+    MODEL="$MODEL_9B"
+    # 9B 저장소는 ~20GB. 볼륨 60GB에는 7B 모델·가상환경·결과가 이미 있으므로 받다가 꽉 차기 전에 멈춘다
+    free_gb="$(df -BG --output=avail "${HF_HOME:-$HOME}" 2>/dev/null | tail -1 | tr -dc '0-9' || true)"
+    if [[ -n "$free_gb" && "$free_gb" -lt 24 ]]; then
+      echo "디스크 여유 ${free_gb}GB < 24GB. 볼륨을 늘리세요 (RunPod 콘솔 → Edit Pod)." >&2
+      exit 1
+    fi
+    ;;
+  *) echo "알 수 없는 RUN_PROFILE: $RUN_PROFILE (7b | 9b)" >&2; exit 1 ;;
+esac
+
 echo "== 6. 모델 다운로드 → ${HF_HOME:-기본 HF 캐시}"
 # 공개 모델이라 토큰이 없어도 받을 수 있다. HF_TOKEN을 export 해 두면 속도 제한이 느슨해진다.
-uv run python -c "from huggingface_hub import snapshot_download; print(snapshot_download('${MODEL_7B}'))"
+uv run python -c "from huggingface_hub import snapshot_download; print(snapshot_download('${MODEL}'))"
 
 df -h /workspace 2>/dev/null || true
-echo "준비 완료. 다음: tmux new -s carmind  →  bash scripts/runpod/run_all.sh"
+if [[ "$RUN_PROFILE" == 7b ]]; then
+  echo "준비 완료. 다음: tmux new -s carmind  →  bash scripts/runpod/run_all.sh"
+else
+  echo "준비 완료. 다음: tmux new -s carmind_${RUN_PROFILE}  →  RUN_PROFILE=${RUN_PROFILE} bash scripts/runpod/run_all.sh"
+fi

@@ -19,6 +19,7 @@ from carmind.evaluation.generate import (
     count_generated,
     pending,
     prompt_messages,
+    render_prompt,
 )
 from carmind.evaluation.grade import (
     GRADER_VERSION,
@@ -312,3 +313,35 @@ def test_git_commit_marks_untracked_as_dirty(tmp_path):
     # 미추적 새 파일은 dirty
     (tmp_path / "new.py").write_text("x")
     assert git_commit(tmp_path).endswith("-dirty")
+
+
+class TemplateStub:
+    """enable_thinking을 받는 템플릿 흉내 (프롬프트 끝부분만 확인한다)."""
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False, enable_thinking=None):
+        tail = "<think>\n\n</think>\n\n" if enable_thinking is False else "<think>\n"
+        return "<|im_start|>assistant\n" + tail
+
+
+def test_render_prompt_requires_think_off():
+    tok = TemplateStub()
+    assert render_prompt(tok, [], {"enable_thinking": False}).endswith("</think>\n\n")
+    with pytest.raises(ValueError, match="생각 모드"):
+        render_prompt(tok, [])
+
+
+def test_genconfig_template_kwargs_absent_when_unset():
+    cfg = GenConfig(model="m", adapter=None, mode="closed")
+    assert "chat_template_kwargs" not in cfg.identity() and "chat_template_kwargs" not in cfg.meta()
+    on = GenConfig(model="m", adapter=None, mode="closed", chat_template_kwargs={"enable_thinking": False})
+    assert on.identity()["chat_template_kwargs"] == {"enable_thinking": False}
+    assert on.meta()["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_resume_rejects_changed_template_kwargs(tmp_path):
+    meta = tmp_path / "meta.json"
+    old = GenConfig(model="m", adapter=None, mode="closed")
+    meta.write_text(json.dumps({"generation": old.meta()}), encoding="utf-8")
+    check_resume(meta, GenConfig(model="m", adapter=None, mode="closed"))
+    with pytest.raises(SystemExit):
+        check_resume(meta, GenConfig(model="m", adapter=None, mode="closed", chat_template_kwargs={"enable_thinking": False}))

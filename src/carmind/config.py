@@ -27,6 +27,9 @@ class ModelConfig(BaseModel):
     name: str
     # attention 구현. None이면 transformers 기본값(보통 sdpa). flash_attention_2는 패키지를 따로 설치해야 한다
     attn_implementation: str | None = None
+    # apply_chat_template에 그대로 넘길 인자. Qwen3.5처럼 템플릿이 옵션을 받는 모델에서 쓴다 (예: enable_thinking: false).
+    # None이면 아무것도 넘기지 않으므로 Qwen2.5 프롬프트는 이 필드가 생기기 전과 똑같다
+    chat_template_kwargs: dict[str, Any] | None = None
 
 
 class ChunkConfig(BaseModel):

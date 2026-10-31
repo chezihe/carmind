@@ -1,0 +1,45 @@
+# GPU 서버(RunPod) 본 학습: sft_9b_closed.yaml과 같은 조건에서 형식만 rag(참고 문서 + 질문)로 바꾼 비교 실험.
+# sft_7b_rag.yaml과 같은 데이터·epoch·실효 배치·lr·LoRA r/alpha로 두고 모델과 LoRA 대상 이름, 생각 모드 설정만 바꿨다.
+# 메모리 기준: A100 80GB에서 그대로 돈다 (예상 수치는 docs/runpod.md).
+runtime:
+  device: cuda
+  dtype: bfloat16
+  seed: 42
+
+model:
+  name: Qwen/Qwen3.5-9B
+  attn_implementation: sdpa
+  # 9B 템플릿은 기본이 생각 모드다. 꺼야 프롬프트에 빈 think 블록이 들어가 label에는 답변만 남는다
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train: data/processed/sft/rag/train.jsonl
+  val: data/processed/sft/rag/val.jsonl
+  max_train_samples: null   # 전체 16,176개
+  max_val_samples: null     # 전체 850개
+  max_seq_len: 1024         # 7B와 같게 둔다. Qwen3.5 토크나이저로는 중앙값 ~460, p95 ~545, 최대 ~710토큰이라 잘리는 샘플이 없다
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # Qwen3.5 텍스트 층의 모든 선형층 (attention + MLP). 7B와 같은 규칙이지만 층 구성이 달라 이름 목록 대신 정규식을 쓴다.
+  # 전체 32층 중 4층마다 하나만 일반 attention(self_attn)이고 나머지 24층은 Gated DeltaNet(linear_attn)이다.
+  # q_proj 같은 이름만 나열하면 linear_attn이 통째로 빠지고, 정규식은 visual·lm_head·conv1d에 붙지 않는다.
+  target_modules: '.*\.layers\.\d+\.(self_attn\.[qkvo]_proj|linear_attn\.(in_proj_qkv|in_proj_z|in_proj_a|in_proj_b|out_proj)|mlp\.(gate|up|down)_proj)'
+
+train:
+  lr: 2.0e-4
+  num_epochs: 1            # 약 1,011 step
+  warmup_steps: 30
+  batch_size: 4            # 입력이 closed의 ~4배. 가장 긴 배치(4×736)에서도 checkpointing을 켜면 ~45GB 이하로 추정
+  grad_accum: 4            # 실효 배치 16 (closed와 같음)
+  max_grad_norm: 1.0
+  gradient_checkpointing: true   # 7B와 같게 켠다. 속도는 조금 떨어지지만 메모리가 크게 준다
+  log_every: 10
+  eval_every: 200          # val 850개(긴 입력) 평가 1회 1~2분
+  save_every_minutes: 15
+  keep_checkpoints: 2
+
+output_dir: outputs/sft_9b_rag
